@@ -176,6 +176,85 @@ const BRAVE_CLEAN_ENGINE = `
         ytm-bottom-sheet-renderer {
           pointer-events: auto !important;
         }
+
+        /* Fit Screen (Zoom to Fill) Engine */
+        html.fit-screen-active video,
+        body.fit-screen-active video,
+        video.fit-screen-cover {
+          object-fit: cover !important;
+          width: 100vw !important;
+          height: 100vh !important;
+          max-width: 100vw !important;
+          max-height: 100vh !important;
+        }
+
+        #__yt_fit_screen_btn__ {
+          position: absolute;
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          background: rgba(15, 15, 15, 0.72);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+          border: 1px solid rgba(255, 255, 255, 0.25);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          z-index: 999999 !important;
+          transition: transform 0.15s ease, opacity 0.2s ease;
+          padding: 0;
+          margin: 0;
+          pointer-events: auto !important;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        }
+
+        @media (orientation: landscape) {
+          #__yt_fit_screen_btn__ {
+            top: 16px;
+            left: 16px;
+            right: auto;
+          }
+        }
+
+        @media (orientation: portrait) {
+          #__yt_fit_screen_btn__ {
+            top: 12px;
+            right: 56px;
+            left: auto;
+          }
+        }
+
+        #__yt_fit_screen_btn__:active {
+          transform: scale(0.9);
+          background: rgba(255, 255, 255, 0.25);
+        }
+
+        #__yt_fit_toast__ {
+          position: absolute;
+          top: 24px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: rgba(15, 15, 15, 0.85);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          color: #FFFFFF;
+          font-size: 13px;
+          font-weight: 600;
+          padding: 6px 14px;
+          border-radius: 20px;
+          z-index: 1000000 !important;
+          pointer-events: none;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+          opacity: 0;
+          transition: opacity 0.25s ease, transform 0.25s ease;
+        }
+
+        #__yt_fit_toast__.show {
+          opacity: 1;
+          transform: translateX(-50%) translateY(4px);
+        }
       \`;
       (document.head || document.documentElement).appendChild(style);
 
@@ -191,6 +270,7 @@ const BRAVE_CLEAN_ENGINE = `
   function handleVideoAds() {
     try {
       injectStyles();
+      ensureFitScreenButton();
 
       // Click all modern & legacy skip buttons
       var skipSelectors = [
@@ -495,6 +575,12 @@ const BRAVE_CLEAN_ENGINE = `
     if (!window.location.href.includes('/watch') && !document.querySelector('video')) {
       return;
     }
+    if (!enter && isFitCover) {
+      isFitCover = false;
+      applyFitScreenState(false);
+      var btn = document.getElementById('__yt_fit_screen_btn__');
+      if (btn) btn.innerHTML = FIT_ICON_EXPAND;
+    }
     window.__pendingFullscreen = enter;
     tryTriggerFullscreen(enter);
   };
@@ -514,6 +600,139 @@ const BRAVE_CLEAN_ENGINE = `
       tryTriggerFullscreen(true);
     }
   }, { capture: true, passive: true });
+
+  // 9. Fit Screen (Zoom to Fill) Engine & Floating Toggle Button
+  var isFitCover = false;
+  var lastToggleTime = 0;
+  var toastTimeout = null;
+
+  var FIT_ICON_EXPAND = '<svg viewBox="0 0 24 24" width="22" height="22" fill="#FFFFFF"><path d="M15 3l2.3 2.3-3.89 3.89 1.41 1.41L18.7 6.7 21 9V3h-6zM3 9l2.3-2.3 3.89 3.89 1.41-1.41L6.7 5.3 9 3H3v6zm6 12l-2.3-2.3 3.89-3.89-1.41-1.41L5.3 17.3 3 15v6h6zm12-6l-2.3 2.3-3.89-3.89-1.41 1.41 3.89 3.89L15 21h6v-6z"/></svg>';
+  var FIT_ICON_COLLAPSE = '<svg viewBox="0 0 24 24" width="22" height="22" fill="#3EA6FF"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-14v3h3v2h-5V5h2z"/></svg>';
+
+  function showFitToast(msg) {
+    try {
+      var toast = document.getElementById('__yt_fit_toast__');
+      if (!toast) {
+        toast = document.createElement('div');
+        toast.id = '__yt_fit_toast__';
+        var container = document.querySelector('.html5-video-player') || document.body;
+        container.appendChild(toast);
+      }
+      toast.textContent = msg;
+      toast.classList.add('show');
+      if (toastTimeout) clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(function() {
+        if (toast) toast.classList.remove('show');
+      }, 1800);
+    } catch(e) {}
+  }
+
+  function applyFitScreenState(active) {
+    try {
+      if (active) {
+        document.documentElement.classList.add('fit-screen-active');
+        document.body.classList.add('fit-screen-active');
+      } else {
+        document.documentElement.classList.remove('fit-screen-active');
+        document.body.classList.remove('fit-screen-active');
+      }
+
+      var video = document.querySelector('video');
+      if (video) {
+        if (active) {
+          video.classList.add('fit-screen-cover');
+          video.style.setProperty('object-fit', 'cover', 'important');
+        } else {
+          video.classList.remove('fit-screen-cover');
+          video.style.setProperty('object-fit', 'contain', 'important');
+        }
+      }
+    } catch(e) {}
+  }
+
+  function toggleFitScreen() {
+    isFitCover = !isFitCover;
+
+    // 1. Ensure true native fullscreen
+    var isFull = Boolean(
+      document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.mozFullScreenElement ||
+      document.msFullscreenElement
+    );
+
+    if (!isFull) {
+      var fsBtn = document.querySelector('button.fullscreen-icon, .fullscreen-icon, .ytp-fullscreen-button, button[aria-label*="Full screen" i], button[aria-label*="fullscreen" i], [aria-label*="पूरा स्क्रीन" i]');
+      if (fsBtn) {
+        fsBtn.click();
+      } else {
+        var v = document.querySelector('video');
+        if (v) {
+          if (v.requestFullscreen) v.requestFullscreen().catch(function(){});
+          else if (v.webkitRequestFullscreen) v.webkitRequestFullscreen().catch(function(){});
+        }
+      }
+    }
+
+    // 2. Apply Fit Screen styles
+    applyFitScreenState(isFitCover);
+
+    // 3. Update icon
+    var btn = document.getElementById('__yt_fit_screen_btn__');
+    if (btn) {
+      btn.innerHTML = isFitCover ? FIT_ICON_COLLAPSE : FIT_ICON_EXPAND;
+    }
+
+    // 4. Show HUD toast
+    showFitToast(isFitCover ? 'Fit to Screen (Zoom to Fill)' : 'Original (16:9 Fit)');
+  }
+
+  function handleFitScreenClick() {
+    var now = Date.now();
+    if (now - lastToggleTime < 350) return;
+    lastToggleTime = now;
+    toggleFitScreen();
+  }
+
+  function ensureFitScreenButton() {
+    try {
+      if (!window.location.href.includes('/watch') && !document.querySelector('video')) {
+        var existing = document.getElementById('__yt_fit_screen_btn__');
+        if (existing) existing.style.display = 'none';
+        return;
+      }
+
+      var playerContainer = document.querySelector('.html5-video-player') || document.querySelector('#player-control-overlay') || document.querySelector('.player-container');
+      if (!playerContainer) return;
+
+      var btn = document.getElementById('__yt_fit_screen_btn__');
+      if (!btn) {
+        btn = document.createElement('button');
+        btn.id = '__yt_fit_screen_btn__';
+        btn.setAttribute('aria-label', 'Fit Screen');
+        btn.innerHTML = isFitCover ? FIT_ICON_COLLAPSE : FIT_ICON_EXPAND;
+
+        btn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          e.preventDefault();
+          handleFitScreenClick();
+        }, true);
+
+        btn.addEventListener('touchend', function(e) {
+          e.stopPropagation();
+          e.preventDefault();
+          handleFitScreenClick();
+        }, true);
+
+        playerContainer.appendChild(btn);
+      } else {
+        btn.style.display = 'flex';
+        if (btn.parentElement !== playerContainer) {
+          playerContainer.appendChild(btn);
+        }
+      }
+    } catch(e) {}
+  }
 })();
 true;
 `;
