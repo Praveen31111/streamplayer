@@ -179,51 +179,13 @@ const BRAVE_CLEAN_ENGINE = `
           z-index: 9999 !important;
         }
 
-        /* Video Player Clean Overlay - Titles and Controls Fade Out Automatically */
+        /* Ensure player controls and dialogs remain completely interactive and responsive */
+        .html5-video-player,
+        .player-controls-background,
         .player-control-overlay,
-        .ytp-chrome-top,
-        .ytp-title-text,
-        .ytm-custom-control {
-          transition: opacity 0.25s ease-out !important;
-        }
-
-        /* Settings Gear Icon in Landscape & Fullscreen - Big Touch Target */
-        .ytp-settings-button,
-        button[aria-label*="Settings" i],
-        button[aria-label*="Playback settings" i] {
-          pointer-events: auto !important;
-          min-width: 44px !important;
-          min-height: 44px !important;
-          cursor: pointer !important;
-        }
-
-        /* Quality & Settings Popup Menu - High Z-Index when opened */
-        .ytp-settings-menu,
-        .ytp-popup,
-        .ytp-panel,
-        .ytp-quality-menu,
         ytm-menu-popup-renderer,
         ytm-bottom-sheet-renderer {
-          z-index: 2147483647 !important;
-        }
-
-        /* Zoom HUD Indicator Pill */
-        #__zoom_hud__ {
-          position: fixed;
-          top: 16px;
-          left: 50%;
-          transform: translateX(-50%);
-          background: rgba(0, 0, 0, 0.85);
-          color: #FFFFFF;
-          padding: 6px 14px;
-          border-radius: 20px;
-          font-family: sans-serif;
-          font-size: 13px;
-          font-weight: 600;
-          z-index: 2147483647;
-          pointer-events: none;
-          transition: opacity 0.3s ease;
-          border: 1px solid rgba(255, 255, 255, 0.2);
+          pointer-events: auto !important;
         }
       \`;
       (document.head || document.documentElement).appendChild(style);
@@ -272,10 +234,10 @@ const BRAVE_CLEAN_ENGINE = `
         video.muted = false;
       }
 
-      // Auto-dismiss dialogs & popups
-      var dismissBtn = document.querySelector('button[aria-label="Dismiss"], ytm-button-renderer[dialog-dismiss]');
-      if (dismissBtn) {
-        dismissBtn.click();
+      // Auto-dismiss promo dialogs & upsell popups only (never dismiss player settings or quality menus)
+      var promoDismiss = document.querySelector('ytm-upsell-dialog-renderer button[aria-label="Dismiss"], ytm-mealbar-promo-renderer button[aria-label="Dismiss"], ytm-mealbar-promo-renderer [dialog-dismiss]');
+      if (promoDismiss) {
+        promoDismiss.click();
       }
     } catch(e) {}
   }
@@ -434,16 +396,44 @@ const BRAVE_CLEAN_ENGINE = `
   document.addEventListener('pause', emitMediaState, true);
   document.addEventListener('seeked', emitMediaState, true);
 
-  // 6. Fullscreen Event Bridge
-  document.addEventListener('fullscreenchange', function() {
-    var isFull = Boolean(document.fullscreenElement);
+  // 6. Fullscreen Event Bridge (captures both standard and WebKit HTML5 video fullscreen)
+  function notifyFullscreen() {
+    var isFull = Boolean(
+      document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.mozFullScreenElement ||
+      document.msFullscreenElement
+    );
     if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
       window.ReactNativeWebView.postMessage(JSON.stringify({
         type: 'FULLSCREEN_CHANGE',
         isFullscreen: isFull
       }));
     }
-  });
+  }
+
+  document.addEventListener('fullscreenchange', notifyFullscreen, true);
+  document.addEventListener('webkitfullscreenchange', notifyFullscreen, true);
+  document.addEventListener('mozfullscreenchange', notifyFullscreen, true);
+  document.addEventListener('MSFullscreenChange', notifyFullscreen, true);
+
+  document.addEventListener('webkitbeginfullscreen', function() {
+    if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({
+        type: 'FULLSCREEN_CHANGE',
+        isFullscreen: true
+      }));
+    }
+  }, true);
+
+  document.addEventListener('webkitendfullscreen', function() {
+    if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({
+        type: 'FULLSCREEN_CHANGE',
+        isFullscreen: false
+      }));
+    }
+  }, true);
 
   // 7. Auto-Miniplayer when browsing other pages / searching
   // Keeps video playing at the bottom when navigating to home, search, or channel
@@ -464,107 +454,6 @@ const BRAVE_CLEAN_ENGINE = `
       }
     } catch(e) {}
   }, true);
-
-  // 8. MX Player / YouTube Style Two-Finger Pinch-To-Zoom Controller
-  (function initPinchToZoom() {
-    var currentScale = 1.0;
-    var startDistance = 0;
-    var initialScale = 1.0;
-    var hudTimeout = null;
-    var lastTapTime = 0;
-
-    function getHud() {
-      var hud = document.getElementById('__zoom_hud__');
-      if (!hud) {
-        hud = document.createElement('div');
-        hud.id = '__zoom_hud__';
-        hud.style.display = 'none';
-        document.body.appendChild(hud);
-      }
-      return hud;
-    }
-
-    function showZoomHud(scale) {
-      try {
-        var hud = getHud();
-        clearTimeout(hudTimeout);
-        var pct = Math.round(scale * 100);
-        hud.textContent = scale === 1 ? 'Original (100%)' : pct + '% Zoom';
-        hud.style.display = 'block';
-        hud.style.opacity = '1';
-        hudTimeout = setTimeout(function() {
-          hud.style.opacity = '0';
-          setTimeout(function() { hud.style.display = 'none'; }, 300);
-        }, 1200);
-      } catch(e) {}
-    }
-
-    function getVideo() {
-      return document.querySelector('video');
-    }
-
-    // ONLY intercept when touching the video player area
-    function isVideoArea(el) {
-      return Boolean(el && el.closest && el.closest('.html5-video-player, video, .player-container, #player-container'));
-    }
-
-    // NEVER intercept buttons, controls, or settings menus!
-    function isControl(el) {
-      return Boolean(el && el.closest && el.closest('button, .ytp-button, [role="button"], ytm-menu-popup-renderer, .ytp-settings-menu, .ytp-popup, [role="menu"], [role="dialog"], a'));
-    }
-
-    document.addEventListener('touchstart', function(e) {
-      if (isControl(e.target)) return; // Let buttons, settings, play/pause work 100% natively!
-      if (!isVideoArea(e.target)) return;
-
-      var video = getVideo();
-      if (!video) return;
-
-      // ONLY track when exactly 2 fingers touch the video!
-      if (e.touches.length === 2) {
-        var dx = e.touches[0].clientX - e.touches[1].clientX;
-        var dy = e.touches[0].clientY - e.touches[1].clientY;
-        startDistance = Math.hypot(dx, dy);
-        initialScale = currentScale;
-        video.style.transition = 'none';
-      }
-    }, { passive: true });
-
-    document.addEventListener('touchmove', function(e) {
-      if (e.touches.length === 2 && startDistance > 0) {
-        var video = getVideo();
-        if (!video) return;
-
-        var dx = e.touches[0].clientX - e.touches[1].clientX;
-        var dy = e.touches[0].clientY - e.touches[1].clientY;
-        var currentDistance = Math.hypot(dx, dy);
-        var factor = currentDistance / startDistance;
-        var newScale = Math.min(Math.max(1.0, initialScale * factor), 3.5);
-
-        currentScale = newScale;
-        video.style.transformOrigin = 'center center';
-        video.style.transform = 'scale(' + currentScale + ')';
-        showZoomHud(currentScale);
-
-        if (e.cancelable) {
-          e.preventDefault();
-        }
-      }
-    }, { passive: false });
-
-    document.addEventListener('touchend', function(e) {
-      if (e.touches.length < 2 && startDistance > 0) {
-        startDistance = 0;
-        var video = getVideo();
-        if (video && currentScale < 1.08) {
-          currentScale = 1.0;
-          video.style.transition = 'transform 0.25s ease';
-          video.style.transform = 'scale(1)';
-          showZoomHud(1.0);
-        }
-      }
-    }, { passive: true });
-  })();
 })();
 true;
 `;
@@ -574,11 +463,30 @@ export const SeamlessYouTubeApp: React.FC = () => {
   const webViewRef = useRef<WebView>(null);
   const [canGoBack, setCanGoBack] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isLandscape, setIsLandscape] = useState(false);
   const lastBackPressTimeRef = useRef(0);
 
-  // Fullscreen orientation & immersive bar handling
+  // Auto-rotation & physical orientation detection
   useEffect(() => {
-    // Bind background audio bridge resume callback to seek WebView on return
+    // Start with orientation unlocked so device auto-rotates smoothly when turned sideways
+    ScreenOrientation.unlockAsync().catch(() => {});
+
+    const sub = ScreenOrientation.addOrientationChangeListener(event => {
+      const o = event.orientationInfo.orientation;
+      const landscape =
+        o === ScreenOrientation.Orientation.LANDSCAPE_LEFT ||
+        o === ScreenOrientation.Orientation.LANDSCAPE_RIGHT;
+      setIsLandscape(landscape);
+    });
+
+    return () => {
+      ScreenOrientation.removeOrientationChangeListener(sub);
+      ScreenOrientation.unlockAsync().catch(() => {});
+    };
+  }, []);
+
+  // Background audio bridge resume callback
+  useEffect(() => {
     backgroundAudioBridge.setResumeCallback((timeSec: number) => {
       webViewRef.current?.injectJavaScript(`
         (function() {
@@ -597,6 +505,7 @@ export const SeamlessYouTubeApp: React.FC = () => {
     };
   }, []);
 
+  // Fullscreen orientation & immersive bar handling
   useEffect(() => {
     const handleOrientation = async () => {
       try {
@@ -606,7 +515,8 @@ export const SeamlessYouTubeApp: React.FC = () => {
             await setVisibilityAsync('hidden');
           }
         } else {
-          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+          // When exiting fullscreen, unlock so the device naturally follows phone holding position
+          await ScreenOrientation.unlockAsync();
           if (Platform.OS === 'android') {
             await setVisibilityAsync('visible');
           }
@@ -709,18 +619,20 @@ export const SeamlessYouTubeApp: React.FC = () => {
     return true;
   }, []);
 
+  const isImmersive = isFullscreen || isLandscape;
+
   return (
     <View
       style={[
         styles.container,
-        { paddingTop: isFullscreen ? 0 : Math.max(insets.top, 8) },
+        { paddingTop: isImmersive ? 0 : Math.max(insets.top, 8) },
       ]}
     >
       <StatusBar
         barStyle="light-content"
         backgroundColor="#0F0F0F"
-        hidden={isFullscreen}
-        translucent={isFullscreen}
+        hidden={isImmersive}
+        translucent={isImmersive}
       />
 
       <WebView
@@ -746,6 +658,7 @@ export const SeamlessYouTubeApp: React.FC = () => {
         showsHorizontalScrollIndicator={false}
         showsVerticalScrollIndicator={false}
         androidLayerType="hardware"
+        overScrollMode="never"
         style={styles.webView}
       />
     </View>
