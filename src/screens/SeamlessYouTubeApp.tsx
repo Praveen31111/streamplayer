@@ -177,6 +177,25 @@ const BRAVE_CLEAN_ENGINE = `
           pointer-events: auto !important;
         }
 
+        /* Settings Gear Icon & Quality Menu - Instant 1-tap responsiveness */
+        .ytm-custom-control.ytm-settings-button,
+        button[aria-label*="Playback settings" i],
+        button[aria-label*="Settings" i],
+        .ytp-settings-button,
+        button.fullscreen-icon,
+        button[aria-label*="Full screen" i] {
+          pointer-events: auto !important;
+          z-index: 1000 !important;
+        }
+
+        ytm-menu-popup-renderer,
+        ytm-bottom-sheet-renderer,
+        .ytp-popup,
+        .ytp-settings-menu {
+          pointer-events: auto !important;
+          z-index: 2147483647 !important;
+        }
+
         /* Prevent playlist panel from sticking over watch page content in portrait */
         ytm-watch ytm-playlist-panel-renderer {
           position: relative !important;
@@ -462,7 +481,7 @@ const BRAVE_CLEAN_ENGINE = `
       );
       if (enter && !isFull) {
         pendingLandscapeFullscreen = true;
-        var fsBtn = document.querySelector('button.fullscreen-icon, button[aria-label*="Full screen" i], button[aria-label*="fullscreen" i], .ytp-fullscreen-button');
+        var fsBtn = document.querySelector('button.fullscreen-icon, button[aria-label*="Full screen" i], button[aria-label*="fullscreen" i], .ytp-fullscreen-button, .fullscreen-icon');
         if (fsBtn) {
           fsBtn.click();
         } else {
@@ -475,7 +494,7 @@ const BRAVE_CLEAN_ENGINE = `
         }
       } else if (!enter && isFull) {
         pendingLandscapeFullscreen = false;
-        var exitBtn = document.querySelector('button[aria-label*="Exit full screen" i], button[aria-label*="exit fullscreen" i]');
+        var exitBtn = document.querySelector('button[aria-label*="Exit full screen" i], button[aria-label*="exit fullscreen" i], button.fullscreen-icon');
         if (exitBtn) {
           exitBtn.click();
         } else if (document.exitFullscreen) {
@@ -492,7 +511,7 @@ const BRAVE_CLEAN_ENGINE = `
     try {
       if (pendingLandscapeFullscreen) {
         pendingLandscapeFullscreen = false;
-        var fsBtn = document.querySelector('button.fullscreen-icon, button[aria-label*="Full screen" i], button[aria-label*="fullscreen" i], .ytp-fullscreen-button');
+        var fsBtn = document.querySelector('button.fullscreen-icon, button[aria-label*="Full screen" i], button[aria-label*="fullscreen" i], .ytp-fullscreen-button, .fullscreen-icon');
         if (fsBtn) {
           fsBtn.click();
         } else {
@@ -506,6 +525,107 @@ const BRAVE_CLEAN_ENGINE = `
       }
     } catch(e) {}
   }, { capture: true, passive: true });
+
+  // 9. Hardware-Accelerated 2-Finger Pinch-to-Zoom (MX Player & YouTube Native App Experience)
+  (function initPinchToZoom() {
+    var currentScale = 1.0;
+    var baseScale = 1.0;
+    var initialDistance = 0;
+    var isPinching = false;
+    var lastSingleTap = 0;
+    var toastTimer = null;
+
+    function showZoomBadge(text) {
+      try {
+        var badge = document.getElementById('ytm-zoom-badge');
+        if (!badge) {
+          badge = document.createElement('div');
+          badge.id = 'ytm-zoom-badge';
+          badge.style.cssText = 'position:fixed;top:32px;left:50%;transform:translateX(-50%);background:rgba(15,15,15,0.92);color:#FFFFFF;padding:6px 16px;border-radius:18px;font-size:13px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;z-index:2147483647;pointer-events:none;transition:opacity 0.25s ease;box-shadow:0 4px 16px rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.15);letter-spacing:0.4px;';
+          document.body.appendChild(badge);
+        }
+        badge.textContent = text;
+        badge.style.opacity = '1';
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(function() {
+          badge.style.opacity = '0';
+        }, 1200);
+      } catch(e) {}
+    }
+
+    function getTouchDist(t1, t2) {
+      var dx = t1.clientX - t2.clientX;
+      var dy = t1.clientY - t2.clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    function applyScale(scale, animate) {
+      var video = document.querySelector('video');
+      if (!video) return;
+      currentScale = Math.min(Math.max(scale, 1.0), 3.5);
+      video.style.transformOrigin = 'center center';
+      video.style.transition = animate ? 'transform 0.25s cubic-bezier(0.25, 1, 0.5, 1)' : 'none';
+      if (currentScale <= 1.03) {
+        video.style.transform = '';
+        currentScale = 1.0;
+      } else {
+        video.style.transform = 'scale(' + currentScale.toFixed(3) + ')';
+      }
+    }
+
+    window.addEventListener('touchstart', function(e) {
+      if (e.touches.length === 2) {
+        // 2-Finger Pinch Start
+        isPinching = true;
+        initialDistance = getTouchDist(e.touches[0], e.touches[1]);
+        baseScale = currentScale;
+        e.preventDefault(); // Prevent standard page zooming
+      } else if (e.touches.length === 1) {
+        // Double-tap detector on player area (outside buttons)
+        var target = e.target;
+        var isPlayer = target && (target.closest('#player-control-overlay') || target.closest('.html5-video-player') || target.tagName === 'VIDEO');
+        var isInteractiveBtn = target && target.closest('button, a, [role="button"], input, select');
+
+        var now = Date.now();
+        if (isPlayer && !isInteractiveBtn && (now - lastSingleTap < 300)) {
+          // Double-tap toggle: Original vs Zoom to Fill (1.35x)
+          if (currentScale > 1.05) {
+            applyScale(1.0, true);
+            showZoomBadge('Original (100%)');
+          } else {
+            applyScale(1.35, true);
+            showZoomBadge('Zoom to fill');
+          }
+          lastSingleTap = 0;
+        } else {
+          lastSingleTap = now;
+        }
+      }
+    }, { passive: false, capture: true });
+
+    window.addEventListener('touchmove', function(e) {
+      if (!isPinching || e.touches.length !== 2) return;
+      e.preventDefault();
+      var dist = getTouchDist(e.touches[0], e.touches[1]);
+      if (initialDistance > 0) {
+        var ratio = dist / initialDistance;
+        applyScale(baseScale * ratio, false);
+      }
+    }, { passive: false, capture: true });
+
+    window.addEventListener('touchend', function(e) {
+      if (isPinching && e.touches.length < 2) {
+        isPinching = false;
+        if (currentScale < 1.08) {
+          applyScale(1.0, true);
+          showZoomBadge('Original');
+        } else {
+          applyScale(currentScale, true);
+          showZoomBadge(Math.round(currentScale * 100) + '%');
+        }
+      }
+    }, { passive: true, capture: true });
+  })();
 })();
 true;
 `;
