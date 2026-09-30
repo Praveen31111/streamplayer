@@ -1,7 +1,6 @@
 import { AppState, AppStateStatus } from 'react-native';
 import { createVideoPlayer, VideoPlayer } from 'expo-video';
 import * as FileSystem from 'expo-file-system/legacy';
-import { extractPlayableStream } from '../api';
 
 interface VideoMeta {
   title?: string;
@@ -17,13 +16,9 @@ class NativeBackgroundAudioBridge {
   private activeVideoId: string | null = null;
   private lastReportedTime: number = 0;
   private isWebViewPlaying: boolean = false;
-  private audioStreamUrl: string | null = null;
-  private player: VideoPlayer | null = null;
   private focusKeeperPlayer: VideoPlayer | null = null;
   private silentUri: string | null = null;
   private activeMeta: VideoMeta = {};
-  private isPrewarming: boolean = false;
-  private wasPlayingInBackground: boolean = false;
   private appStateSubscription: any = null;
   private injectResumeCallback: ((timeSec: number) => void) | null = null;
 
@@ -49,8 +44,8 @@ class NativeBackgroundAudioBridge {
   }
 
   /**
-   * Focus Keeper: Android treats the process as FOREGROUND_MEDIA with AUDIO_ACTIVE.
-   * This prevents Android OS AudioFlinger from suspending the WebView audio on screen-off.
+   * Focus Keeper: Android treats the process as active audio player with AUDIO_ACTIVE.
+   * Keeps audio mixing open without attempting restricted foreground notification services.
    */
   private setupFocusKeeper() {
     if (!this.silentUri) return;
@@ -58,17 +53,12 @@ class NativeBackgroundAudioBridge {
       if (!this.focusKeeperPlayer) {
         this.focusKeeperPlayer = createVideoPlayer({
           uri: this.silentUri,
-          metadata: {
-            title: this.activeMeta.title || 'Playing Audio',
-            artist: this.activeMeta.author || 'YouTube',
-            artwork: this.activeMeta.thumbnail,
-          },
         });
         this.focusKeeperPlayer.loop = true;
         this.focusKeeperPlayer.staysActiveInBackground = true;
         this.focusKeeperPlayer.showNowPlayingNotification = false;
         this.focusKeeperPlayer.audioMixingMode = 'mixWithOthers';
-        this.focusKeeperPlayer.volume = 0.001; // virtually silent, holds Android audio focus
+        this.focusKeeperPlayer.volume = 0.001; // virtually silent
       }
     } catch (err) {
       console.warn('[BackgroundAudioBridge] Setup focus keeper error:', err);
@@ -99,6 +89,7 @@ class NativeBackgroundAudioBridge {
   ) {
     if (!videoId) return;
 
+    this.activeVideoId = videoId;
     this.lastReportedTime = currentTime;
     this.isWebViewPlaying = isPlaying;
 
@@ -122,75 +113,6 @@ class NativeBackgroundAudioBridge {
         } catch {}
       }
     }
-
-    // Video changed: pre-warm fallback audio stream in background
-    if (this.activeVideoId !== videoId) {
-      this.activeVideoId = videoId;
-      this.audioStreamUrl = null;
-      void this.prewarmAudioStream(videoId);
-    }
-  }
-
-  /**
-   * Asynchronously extracts direct audio stream URL for native ExoPlayer fallback
-   */
-  private async prewarmAudioStream(videoId: string): Promise<void> {
-    if (this.isPrewarming) return;
-    this.isPrewarming = true;
-
-    try {
-      const stream = await extractPlayableStream(videoId);
-      const audioUrl = stream?.audioStreamUrl || stream?.streamUrl;
-
-      if (audioUrl && this.activeVideoId === videoId) {
-        this.audioStreamUrl = audioUrl;
-        this.setupNativePlayer(audioUrl);
-      }
-    } catch (err) {
-      console.warn('[BackgroundAudioBridge] Pre-warm stream failed:', err);
-    } finally {
-      this.isPrewarming = false;
-    }
-  }
-
-  private setupNativePlayer(url: string) {
-    try {
-      if (this.player) {
-        try {
-          this.player.pause();
-          this.player.replaceAsync({
-            uri: url,
-            metadata: {
-              title: this.activeMeta.title || 'Playing Audio',
-              artist: this.activeMeta.author || 'YouTube',
-              artwork: this.activeMeta.thumbnail,
-            },
-          });
-        } catch {
-          this.player = null;
-        }
-      }
-
-      if (!this.player) {
-        this.player = createVideoPlayer({
-          uri: url,
-          metadata: {
-            title: this.activeMeta.title || 'Playing Audio',
-            artist: this.activeMeta.author || 'YouTube',
-            artwork: this.activeMeta.thumbnail,
-          },
-        });
-      }
-
-      if (this.player) {
-        this.player.staysActiveInBackground = true;
-        this.player.showNowPlayingNotification = false;
-        this.player.audioMixingMode = 'auto';
-        this.player.pause();
-      }
-    } catch (err) {
-      console.warn('[BackgroundAudioBridge] Setup native player error:', err);
-    }
   }
 
   /**
@@ -198,38 +120,16 @@ class NativeBackgroundAudioBridge {
    */
   private onAppStateChange(nextState: AppStateStatus) {
     if (nextState === 'background' || nextState === 'inactive') {
-      // Keep focus keeper actively holding AudioFocus
+      // Keep focus keeper active while phone is locked or app is in background
       if (this.isWebViewPlaying && this.focusKeeperPlayer) {
         try {
           this.focusKeeperPlayer.play();
         } catch {}
       }
-
-      // If native player with extracted stream is ready, play it as fallback
-      if (this.isWebViewPlaying && this.audioStreamUrl && this.player) {
-        try {
-          const seekPos = Math.max(0, this.lastReportedTime);
-          this.player.currentTime = seekPos;
-          this.player.play();
-          this.wasPlayingInBackground = true;
-        } catch (err) {
-          console.warn('[BackgroundAudioBridge] Failed to start native audio playback:', err);
-        }
-      }
     } else if (nextState === 'active') {
-      // Screen Turned Back ON
-      if (this.wasPlayingInBackground && this.player) {
-        try {
-          const currentAudioTime = this.player.currentTime;
-          this.player.pause();
-          this.wasPlayingInBackground = false;
-
-          if (this.injectResumeCallback && currentAudioTime > 0) {
-            this.injectResumeCallback(currentAudioTime);
-          }
-        } catch (err) {
-          console.warn('[BackgroundAudioBridge] Failed to hand back to WebView:', err);
-        }
+      // Screen Turned Back ON - trigger resume on WebView
+      if (this.isWebViewPlaying && this.injectResumeCallback && this.lastReportedTime > 0) {
+        this.injectResumeCallback(this.lastReportedTime);
       }
     }
   }
@@ -240,10 +140,6 @@ class NativeBackgroundAudioBridge {
       if (this.focusKeeperPlayer) {
         this.focusKeeperPlayer.pause();
         this.focusKeeperPlayer = null;
-      }
-      if (this.player) {
-        this.player.pause();
-        this.player = null;
       }
     } catch {}
   }
