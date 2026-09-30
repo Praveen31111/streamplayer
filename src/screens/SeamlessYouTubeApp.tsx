@@ -11,6 +11,7 @@ import { WebView, WebViewNavigation } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { setVisibilityAsync } from 'expo-navigation-bar';
+import { backgroundAudioBridge } from '../player/NativeBackgroundAudioBridge';
 
 // Universal Android Chrome Mobile User-Agent without 'wv' (WebView flag)
 // 1. Bypasses Google OAuth 403 "disallowed_useragent" (allows 100% genuine Gmail/Google sign-in)
@@ -302,7 +303,42 @@ const BRAVE_CLEAN_ENGINE = `
     }
   }, true);
 
-  // 5. Fullscreen Event Bridge
+  // 5. Native Background Audio Bridge Emitter
+  function emitMediaState() {
+    try {
+      var video = document.querySelector('video');
+      var url = window.location.href;
+      var match = url.match(/[?&]v=([^&]+)/);
+      var videoId = match ? match[1] : '';
+
+      if (!videoId && window.ytInitialPlayerResponse && window.ytInitialPlayerResponse.videoDetails) {
+        videoId = window.ytInitialPlayerResponse.videoDetails.videoId || '';
+      }
+
+      if (video && videoId && window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+        var title = document.title ? document.title.replace(' - YouTube', '').trim() : '';
+        var author = '';
+        var authorEl = document.querySelector('.slim-owner-channel-name, ytm-channel-name, .ytm-autonav-endscreen-header');
+        if (authorEl) author = authorEl.textContent.trim();
+
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'MEDIA_STATE',
+          videoId: videoId,
+          currentTime: Math.floor(video.currentTime || 0),
+          isPlaying: !video.paused && !video.ended,
+          title: title,
+          author: author
+        }));
+      }
+    } catch(e) {}
+  }
+
+  setInterval(emitMediaState, 2000);
+  document.addEventListener('play', emitMediaState, true);
+  document.addEventListener('pause', emitMediaState, true);
+  document.addEventListener('seeked', emitMediaState, true);
+
+  // 6. Fullscreen Event Bridge
   document.addEventListener('fullscreenchange', function() {
     var isFull = Boolean(document.fullscreenElement);
     if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
@@ -324,6 +360,26 @@ export const SeamlessYouTubeApp: React.FC = () => {
   const lastBackPressTimeRef = useRef(0);
 
   // Fullscreen orientation & immersive bar handling
+  useEffect(() => {
+    // Bind background audio bridge resume callback to seek WebView on return
+    backgroundAudioBridge.setResumeCallback((timeSec: number) => {
+      webViewRef.current?.injectJavaScript(`
+        (function() {
+          var v = document.querySelector('video');
+          if (v) {
+            v.currentTime = ${timeSec};
+            v.play().catch(function(){});
+          }
+        })();
+        true;
+      `);
+    });
+
+    return () => {
+      backgroundAudioBridge.destroy();
+    };
+  }, []);
+
   useEffect(() => {
     const handleOrientation = async () => {
       try {
@@ -388,6 +444,16 @@ export const SeamlessYouTubeApp: React.FC = () => {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === 'FULLSCREEN_CHANGE') {
         setIsFullscreen(Boolean(data.isFullscreen));
+      } else if (data.type === 'MEDIA_STATE') {
+        backgroundAudioBridge.updatePlaybackState(
+          data.videoId,
+          data.currentTime,
+          data.isPlaying,
+          {
+            title: data.title,
+            author: data.author,
+          }
+        );
       }
     } catch {}
   };
