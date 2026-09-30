@@ -66,7 +66,7 @@ class NativeBackgroundAudioBridge {
         });
         this.focusKeeperPlayer.loop = true;
         this.focusKeeperPlayer.staysActiveInBackground = true;
-        this.focusKeeperPlayer.showNowPlayingNotification = true;
+        this.focusKeeperPlayer.showNowPlayingNotification = false;
         this.focusKeeperPlayer.audioMixingMode = 'mixWithOthers';
         this.focusKeeperPlayer.volume = 0.001; // virtually silent, holds Android audio focus
       }
@@ -184,7 +184,7 @@ class NativeBackgroundAudioBridge {
 
       if (this.player) {
         this.player.staysActiveInBackground = true;
-        this.player.showNowPlayingNotification = true;
+        this.player.showNowPlayingNotification = false;
         this.player.audioMixingMode = 'auto';
         this.player.pause();
       }
