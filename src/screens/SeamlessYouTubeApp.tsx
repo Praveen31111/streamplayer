@@ -189,7 +189,120 @@ const BRAVE_CLEAN_ENGINE = `
     obs.observe(document.documentElement, { childList: true, subtree: true });
   } catch(e) {}
 
-  // 4. Fullscreen Event Bridge
+  // 4. Background Playback & Screen-Off Audio Engine (Brave Browser Technique)
+  try {
+    // 4a. Freeze Page Visibility API to always report visible (prevents YouTube from pausing)
+    Object.defineProperty(document, 'hidden', {
+      get: function() { return false; },
+      configurable: true
+    });
+    Object.defineProperty(document, 'visibilityState', {
+      get: function() { return 'visible'; },
+      configurable: true
+    });
+    Object.defineProperty(document, 'webkitHidden', {
+      get: function() { return false; },
+      configurable: true
+    });
+    Object.defineProperty(document, 'webkitVisibilityState', {
+      get: function() { return 'visible'; },
+      configurable: true
+    });
+
+    // 4b. Spoof document.hasFocus
+    if (Document.prototype && Document.prototype.hasFocus) {
+      Document.prototype.hasFocus = function() { return true; };
+    }
+    document.hasFocus = function() { return true; };
+  } catch(e) {}
+
+  // 4c. Block visibilitychange and blur events from reaching YouTube's player listeners
+  var suppressedEvents = ['visibilitychange', 'webkitvisibilitychange', 'pagehide', 'blur'];
+  for (var k = 0; k < suppressedEvents.length; k++) {
+    (function(evt) {
+      window.addEventListener(evt, function(e) {
+        e.stopImmediatePropagation();
+      }, true);
+      document.addEventListener(evt, function(e) {
+        e.stopImmediatePropagation();
+      }, true);
+    })(suppressedEvents[k]);
+  }
+
+  // 4d. Smart Involuntary Pause Watchdog
+  // Accurately differentiates between user manually tapping pause vs screen-off auto-pause
+  var lastUserTouchTime = 0;
+  window.addEventListener('touchstart', function() {
+    lastUserTouchTime = Date.now();
+  }, { capture: true, passive: true });
+  window.addEventListener('pointerdown', function() {
+    lastUserTouchTime = Date.now();
+  }, { capture: true, passive: true });
+  window.addEventListener('mousedown', function() {
+    lastUserTouchTime = Date.now();
+  }, { capture: true, passive: true });
+
+  // Handle lock screen media notification controls (user explicitly tapped pause on notification)
+  var lockscreenPaused = false;
+  if (navigator.mediaSession) {
+    try {
+      var origSetActionHandler = navigator.mediaSession.setActionHandler.bind(navigator.mediaSession);
+      navigator.mediaSession.setActionHandler = function(action, handler) {
+        if (action === 'pause') {
+          return origSetActionHandler(action, function(details) {
+            lockscreenPaused = true;
+            if (handler) handler(details);
+          });
+        }
+        if (action === 'play') {
+          return origSetActionHandler(action, function(details) {
+            lockscreenPaused = false;
+            if (handler) handler(details);
+          });
+        }
+        return origSetActionHandler(action, handler);
+      };
+    } catch(e) {}
+  }
+
+  // Auto-resume if video paused unexpectedly while not user-paused
+  document.addEventListener('pause', function(e) {
+    var video = e.target;
+    if (video && video.tagName === 'VIDEO' && !video.ended) {
+      var timeSinceTouch = Date.now() - lastUserTouchTime;
+      // If pause was NOT triggered by an active screen touch (< 650ms) and NOT by lockscreen notification
+      if (timeSinceTouch > 650 && !lockscreenPaused) {
+        setTimeout(function() {
+          if (video.paused && !video.ended && !lockscreenPaused) {
+            video.play().catch(function(){});
+          }
+        }, 80);
+      }
+    }
+  }, true);
+
+  // 4e. Silent WebAudio Keep-Alive
+  // Keeps Android AudioFlinger pipeline warm during prolonged screen-off
+  var keepAliveContext = null;
+  function ensureAudioAwake() {
+    try {
+      var AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!keepAliveContext && AudioCtx) {
+        keepAliveContext = new AudioCtx();
+      }
+      if (keepAliveContext && keepAliveContext.state === 'suspended') {
+        keepAliveContext.resume().catch(function(){});
+      }
+    } catch(e) {}
+  }
+  document.addEventListener('play', function(e) {
+    if (e.target && e.target.tagName === 'VIDEO') {
+      lockscreenPaused = false;
+      ensureAudioAwake();
+    }
+  }, true);
+
+  // 5. Fullscreen Event Bridge
   document.addEventListener('fullscreenchange', function() {
     var isFull = Boolean(document.fullscreenElement);
     if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
@@ -338,6 +451,7 @@ export const SeamlessYouTubeApp: React.FC = () => {
         setSupportMultipleWindows={false}
         showsHorizontalScrollIndicator={false}
         showsVerticalScrollIndicator={false}
+        androidLayerType="hardware"
         style={styles.webView}
       />
     </View>
