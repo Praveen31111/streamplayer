@@ -177,31 +177,7 @@ const BRAVE_CLEAN_ENGINE = `
           pointer-events: auto !important;
         }
 
-        /* Settings Gear Icon & Quality Menu - Instant 1-tap responsiveness */
-        .ytm-custom-control.ytm-settings-button,
-        button[aria-label*="Playback settings" i],
-        button[aria-label*="Settings" i],
-        .ytp-settings-button,
-        button.fullscreen-icon,
-        button[aria-label*="Full screen" i] {
-          pointer-events: auto !important;
-          z-index: 1000 !important;
-        }
-
-        ytm-menu-popup-renderer,
-        ytm-bottom-sheet-renderer,
-        .ytp-popup,
-        .ytp-settings-menu {
-          pointer-events: auto !important;
-          z-index: 2147483647 !important;
-        }
-
-        /* Prevent playlist panel from sticking over watch page content in portrait */
-        ytm-watch ytm-playlist-panel-renderer {
-          position: relative !important;
-        }
-
-        /* Clean Edge-to-Edge Player in Landscape - Zero Black Walls */
+        /* Clean Edge-to-Edge Player in Landscape - Zero top header or bottom playlist clutter */
         @media (orientation: landscape) {
           ytm-mobile-topbar-renderer,
           .mobile-topbar-header,
@@ -232,8 +208,6 @@ const BRAVE_CLEAN_ENGINE = `
             width: 100% !important;
             height: 100% !important;
             position: relative !important;
-            overflow: hidden !important;
-            background: transparent !important;
           }
 
           video.video-stream,
@@ -241,7 +215,6 @@ const BRAVE_CLEAN_ENGINE = `
             width: 100% !important;
             height: 100% !important;
             object-fit: contain !important;
-            pointer-events: auto !important;
           }
 
           .player-control-overlay,
@@ -255,7 +228,6 @@ const BRAVE_CLEAN_ENGINE = `
             z-index: 20 !important;
           }
         }
-
       \`;
       (document.head || document.documentElement).appendChild(style);
 
@@ -465,53 +437,43 @@ const BRAVE_CLEAN_ENGINE = `
   document.addEventListener('pause', emitMediaState, true);
   document.addEventListener('seeked', emitMediaState, true);
 
-  // 6. Fullscreen Event Bridge & DOM Fullscreen Engine
-  // Intercepts HTML5 fullscreen to keep player inside WebView DOM
-  // Prevents Android's native onShowCustomView dialog from hiding WebView and windowboxing
-  function notifyFullscreen(isFull) {
+  // 6. Fullscreen Event Bridge (captures both standard and WebKit HTML5 video fullscreen)
+  function notifyFullscreen() {
+    var isFull = Boolean(
+      document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.mozFullScreenElement ||
+      document.msFullscreenElement
+    );
     if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
       window.ReactNativeWebView.postMessage(JSON.stringify({
         type: 'FULLSCREEN_CHANGE',
-        isFullscreen: Boolean(isFull)
+        isFullscreen: isFull
       }));
     }
   }
 
-  try {
-    if (Element.prototype.requestFullscreen) {
-      Element.prototype.requestFullscreen = function() {
-        notifyFullscreen(true);
-        return Promise.resolve();
-      };
-    }
-    if (Element.prototype.webkitRequestFullscreen) {
-      Element.prototype.webkitRequestFullscreen = function() {
-        notifyFullscreen(true);
-      };
-    }
-    if (HTMLVideoElement.prototype.webkitEnterFullscreen) {
-      HTMLVideoElement.prototype.webkitEnterFullscreen = function() {
-        notifyFullscreen(true);
-      };
-    }
-    if (document.exitFullscreen) {
-      document.exitFullscreen = function() {
-        notifyFullscreen(false);
-        return Promise.resolve();
-      };
-    }
-    if (document.webkitExitFullscreen) {
-      document.webkitExitFullscreen = function() {
-        notifyFullscreen(false);
-      };
-    }
-  } catch(e) {}
+  document.addEventListener('fullscreenchange', notifyFullscreen, true);
+  document.addEventListener('webkitfullscreenchange', notifyFullscreen, true);
+  document.addEventListener('mozfullscreenchange', notifyFullscreen, true);
+  document.addEventListener('MSFullscreenChange', notifyFullscreen, true);
 
-  document.addEventListener('fullscreenchange', function() {
-    notifyFullscreen(Boolean(document.fullscreenElement));
+  document.addEventListener('webkitbeginfullscreen', function() {
+    if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({
+        type: 'FULLSCREEN_CHANGE',
+        isFullscreen: true
+      }));
+    }
   }, true);
-  document.addEventListener('webkitfullscreenchange', function() {
-    notifyFullscreen(Boolean(document.webkitFullscreenElement));
+
+  document.addEventListener('webkitendfullscreen', function() {
+    if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({
+        type: 'FULLSCREEN_CHANGE',
+        isFullscreen: false
+      }));
+    }
   }, true);
 
   // 7. Auto-Miniplayer when browsing other pages / searching
@@ -535,7 +497,6 @@ const BRAVE_CLEAN_ENGINE = `
   }, true);
 
   // 8. YouTube Native Fullscreen Controller
-  var pendingLandscapeFullscreen = false;
   window.__setYouTubeFullscreen = function(enter) {
     try {
       var isFull = Boolean(
@@ -545,8 +506,7 @@ const BRAVE_CLEAN_ENGINE = `
         document.msFullscreenElement
       );
       if (enter && !isFull) {
-        pendingLandscapeFullscreen = true;
-        var fsBtn = document.querySelector('button.fullscreen-icon, button[aria-label*="Full screen" i], button[aria-label*="fullscreen" i], .ytp-fullscreen-button, .fullscreen-icon');
+        var fsBtn = document.querySelector('.ytp-fullscreen-button, button[aria-label*="Full screen" i], button[aria-label*="fullscreen" i], .fullscreen-icon');
         if (fsBtn) {
           fsBtn.click();
         } else {
@@ -558,8 +518,7 @@ const BRAVE_CLEAN_ENGINE = `
           }
         }
       } else if (!enter && isFull) {
-        pendingLandscapeFullscreen = false;
-        var exitBtn = document.querySelector('button[aria-label*="Exit full screen" i], button[aria-label*="exit fullscreen" i], button.fullscreen-icon');
+        var exitBtn = document.querySelector('button[aria-label*="Exit full screen" i], button[aria-label*="exit fullscreen" i]');
         if (exitBtn) {
           exitBtn.click();
         } else if (document.exitFullscreen) {
@@ -570,186 +529,6 @@ const BRAVE_CLEAN_ENGINE = `
       }
     } catch(e) {}
   };
-
-  // If user rotates phone sideways, the first touch gesture triggers fullscreen natively with user activation
-  window.addEventListener('touchstart', function() {
-    try {
-      if (pendingLandscapeFullscreen) {
-        pendingLandscapeFullscreen = false;
-        var fsBtn = document.querySelector('button.fullscreen-icon, button[aria-label*="Full screen" i], button[aria-label*="fullscreen" i], .ytp-fullscreen-button, .fullscreen-icon');
-        if (fsBtn) {
-          fsBtn.click();
-        } else {
-          var video = document.querySelector('video');
-          if (video && video.requestFullscreen) {
-            video.requestFullscreen().catch(function(){});
-          } else if (video && video.webkitRequestFullscreen) {
-            video.webkitRequestFullscreen().catch(function(){});
-          }
-        }
-      }
-    } catch(e) {}
-  }, { capture: true, passive: true });
-
-  // 9. Hardware-Accelerated Persistent Pinch-to-Zoom Engine (MX Player & YouTube Native App Experience)
-  (function initPersistentZoom() {
-    var currentScale = 1.0;
-    var baseScale = 1.0;
-    var panX = 0;
-    var panY = 0;
-    var basePanX = 0;
-    var basePanY = 0;
-    var initialDistance = 0;
-    var initialCenter = { x: 0, y: 0 };
-    var isPinching = false;
-    var lastSingleTap = 0;
-    var badgeTimer = null;
-
-    // Dedicated style element with !important - Immune to YouTube script overwrites
-    var zoomStyle = document.getElementById('ytm-persistent-zoom-style');
-    if (!zoomStyle) {
-      zoomStyle = document.createElement('style');
-      zoomStyle.id = 'ytm-persistent-zoom-style';
-      (document.head || document.documentElement).appendChild(zoomStyle);
-    }
-
-    function showZoomBadge(text) {
-      try {
-        var badge = document.getElementById('ytm-zoom-badge');
-        if (!badge) {
-          badge = document.createElement('div');
-          badge.id = 'ytm-zoom-badge';
-          badge.style.cssText = 'position:fixed;top:28px;left:50%;transform:translateX(-50%);background:rgba(15,15,15,0.92);color:#FFFFFF;padding:6px 18px;border-radius:20px;font-size:13px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;z-index:2147483647;pointer-events:none;transition:opacity 0.2s ease;box-shadow:0 4px 16px rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.2);letter-spacing:0.4px;';
-          document.body.appendChild(badge);
-        }
-        badge.textContent = text;
-        badge.style.opacity = '1';
-        clearTimeout(badgeTimer);
-        badgeTimer = setTimeout(function() {
-          badge.style.opacity = '0';
-        }, 1200);
-      } catch(e) {}
-    }
-
-    function applyZoom(scale, tx, ty, animate) {
-      currentScale = Math.min(Math.max(scale, 1.0), 3.5);
-      panX = currentScale <= 1.02 ? 0 : tx;
-      panY = currentScale <= 1.02 ? 0 : ty;
-
-      if (currentScale <= 1.02) {
-        currentScale = 1.0;
-        panX = 0;
-        panY = 0;
-        zoomStyle.textContent = '';
-      } else {
-        var transitionStr = animate ? 'transition: transform 0.25s cubic-bezier(0.25, 1, 0.5, 1) !important;' : 'transition: none !important;';
-        zoomStyle.textContent = \`
-          video, video.video-stream, video.html5-main-video {
-            transform: scale(\${currentScale.toFixed(3)}) translate(\${panX.toFixed(1)}px, \${panY.toFixed(1)}px) !important;
-            transform-origin: center center !important;
-            object-fit: cover !important;
-            \${transitionStr}
-          }
-          .html5-video-player {
-            overflow: hidden !important;
-          }
-        \`;
-      }
-    }
-
-    function getDist(t1, t2) {
-      var dx = t1.clientX - t2.clientX;
-      var dy = t1.clientY - t2.clientY;
-      return Math.sqrt(dx * dx + dy * dy);
-    }
-
-    function getCenter(t1, t2) {
-      return {
-        x: (t1.clientX + t2.clientX) / 2,
-        y: (t1.clientY + t2.clientY) / 2
-      };
-    }
-
-    window.addEventListener('touchstart', function(e) {
-      if (e.touches.length === 2) {
-        // Two fingers: Start Pinch & Pan
-        isPinching = true;
-        initialDistance = getDist(e.touches[0], e.touches[1]);
-        initialCenter = getCenter(e.touches[0], e.touches[1]);
-        baseScale = currentScale;
-        basePanX = panX;
-        basePanY = panY;
-        e.preventDefault(); // Stop native WebView page zooming
-      } else if (e.touches.length === 1 && !isPinching) {
-        // One finger: Check for double-tap outside buttons
-        var target = e.target;
-        var isPlayerArea = target && (target.closest('#player-control-overlay') || target.closest('.html5-video-player') || target.tagName === 'VIDEO');
-        var isButton = target && target.closest('button, a, [role="button"], input, select');
-
-        var now = Date.now();
-        if (isPlayerArea && !isButton && (now - lastSingleTap < 300)) {
-          // Double-tap: Toggle between Original and Zoom to fill
-          if (currentScale > 1.05) {
-            applyZoom(1.0, 0, 0, true);
-            showZoomBadge('Original');
-          } else {
-            applyZoom(1.35, 0, 0, true);
-            showZoomBadge('Zoom to fill');
-          }
-          lastSingleTap = 0;
-        } else {
-          lastSingleTap = now;
-        }
-      }
-    }
-
-    function handleTouchMove(e) {
-      if (!isPinching || e.touches.length !== 2) return;
-      e.preventDefault();
-      var dist = getDist(e.touches[0], e.touches[1]);
-      var center = getCenter(e.touches[0], e.touches[1]);
-      if (initialDistance > 0) {
-        var scaleRatio = dist / initialDistance;
-        var targetScale = baseScale * scaleRatio;
-        var dx = (center.x - initialCenter.x) / targetScale;
-        var dy = (center.y - initialCenter.y) / targetScale;
-        applyZoom(targetScale, basePanX + dx, basePanY + dy, false);
-      }
-    }
-
-    function handleTouchEnd(e) {
-      if (isPinching && e.touches.length < 2) {
-        isPinching = false;
-        if (currentScale < 1.08) {
-          applyZoom(1.0, 0, 0, true);
-          showZoomBadge('Original');
-        } else {
-          applyZoom(currentScale, panX, panY, true);
-          if (Math.abs(currentScale - 1.35) < 0.08) {
-            showZoomBadge('Zoom to fill');
-          } else {
-            showZoomBadge(Math.round(currentScale * 100) + '%');
-          }
-        }
-      }
-    }
-
-    function handleTouchCancel() {
-      if (isPinching) {
-        isPinching = false;
-        applyZoom(currentScale, panX, panY, true);
-      }
-    }
-
-    window.addEventListener('touchstart', handleTouchStart, { passive: false, capture: true });
-    window.addEventListener('touchmove', handleTouchMove, { passive: false, capture: true });
-    window.addEventListener('touchend', handleTouchEnd, { passive: true, capture: true });
-    window.addEventListener('touchcancel', handleTouchCancel, { passive: true, capture: true });
-    document.addEventListener('touchstart', handleTouchStart, { passive: false, capture: true });
-    document.addEventListener('touchmove', handleTouchMove, { passive: false, capture: true });
-    document.addEventListener('touchend', handleTouchEnd, { passive: true, capture: true });
-    document.addEventListener('touchcancel', handleTouchCancel, { passive: true, capture: true });
-  })();
 })();
 true;
 `;
@@ -963,7 +742,7 @@ export const SeamlessYouTubeApp: React.FC = () => {
         sharedCookiesEnabled={true}
         allowsInlineMediaPlayback={true}
         mediaPlaybackRequiresUserAction={false}
-        allowsFullscreenVideo={false}
+        allowsFullscreenVideo={true}
         setSupportMultipleWindows={false}
         showsHorizontalScrollIndicator={false}
         showsVerticalScrollIndicator={false}
