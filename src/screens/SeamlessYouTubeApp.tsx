@@ -130,10 +130,54 @@ const BRAVE_CLEAN_ENGINE = `
           opacity: 0.01 !important;
         }
 
-        /* Pure Dark Theme for Feed */
+        /* Pure Dark Theme Variables & Color Scheme */
+        :root, html[dark], [dark] {
+          --yt-spec-base-background: #0F0F0F !important;
+          --yt-spec-raised-background: #181818 !important;
+          --yt-spec-text-primary: #FFFFFF !important;
+          --yt-spec-text-secondary: #AAAAAA !important;
+          color-scheme: dark !important;
+        }
+
         html, body, ytm-app {
           background-color: #0F0F0F !important;
+          color: #FFFFFF !important;
           -webkit-tap-highlight-color: transparent !important;
+        }
+
+        /* Video Titles in Feed & Search - High Contrast White Text */
+        .media-item-headline,
+        h3.media-item-headline,
+        .compact-media-item-headline,
+        .ytm-media-item .details,
+        .video-title,
+        .slim-video-metadata-title,
+        h1, h2, h3, h4,
+        .ytm-compact-video-renderer-headline,
+        .compact-media-item-headline *,
+        .media-item-headline *,
+        .details .headline,
+        [class*="headline"],
+        [class*="video-title"] {
+          color: #FFFFFF !important;
+          -webkit-text-fill-color: #FFFFFF !important;
+          opacity: 1 !important;
+          visibility: visible !important;
+        }
+
+        /* Channel Names, Views Count & Upload Date */
+        .media-item-metadata,
+        .compact-media-item-metadata,
+        .secondary-text,
+        .subhead,
+        .slim-owner-channel-name,
+        ytm-badge-and-byline-renderer,
+        ytm-badge-and-byline-renderer *,
+        .ytm-badge-and-byline-item {
+          color: #AAAAAA !important;
+          -webkit-text-fill-color: #AAAAAA !important;
+          opacity: 1 !important;
+          visibility: visible !important;
         }
 
         /* Ensure Miniplayer stays visible, docked at bottom while browsing */
@@ -150,6 +194,12 @@ const BRAVE_CLEAN_ENGINE = `
         }
       \`;
       (document.head || document.documentElement).appendChild(style);
+
+      // Force native YouTube dark theme attribute & cookie
+      try {
+        document.documentElement.setAttribute('dark', 'true');
+        document.cookie = "PREF=f6=400; domain=.youtube.com; path=/; max-age=31536000";
+      } catch(e) {}
     } catch(e) {}
   }
 
