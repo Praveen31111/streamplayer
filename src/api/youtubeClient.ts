@@ -1,17 +1,42 @@
 import './polyfills';
-import { Innertube, Platform } from 'youtubei.js';
+import { Innertube, Platform, Parser } from 'youtubei.js';
 import axios from 'axios';
 import { getStoredCredentials, removeCredentials } from '../auth/authStorage';
 import { setCachedMetadata } from '../database/repositories/cacheRepo';
 import {
   searchInnerTubeDirect,
+  searchInnerTubeWithContinuation,
   extractInnerTubeStreamDirect,
   fetchRelatedVideosDirect,
 } from './mediaServiceCore';
-import { AppVideoItem, StreamFormatOption, PlayableStreamResult, VideoComment } from './types';
+import {
+  AppVideoItem,
+  PaginatedVideosResult,
+  StreamFormatOption,
+  PlayableStreamResult,
+  VideoComment,
+} from './types';
+import {
+  getHealthyPipedInstances,
+  recordInstanceFailure,
+  recordInstanceSuccess,
+} from './remoteConfig';
 
 // Re-export types for backward compatibility across the app
 export * from './types';
+
+// Silence benign YouTube UI node updates (e.g., CommentFilterContextView) that are auto-handled by JIT
+try {
+  if (typeof Parser?.setParserErrorHandler === 'function') {
+    Parser.setParserErrorHandler((error: any) => {
+      if (error?.error_type === 'class_not_found' || error?.error_type === 'class_changed') {
+        return;
+      }
+    });
+  }
+} catch {
+  // Ignore
+}
 
 let innertubeInstance: Innertube | null = null;
 let isInitializing = false;
@@ -30,20 +55,15 @@ class MemoryCache {
   }
 }
 
-const WORKING_PIPED_INSTANCES = [
-  'https://pa.il.ax',
-  'https://piped.video',
-  'https://api.piped.projectsegfau.lt',
-];
-
 /**
- * Fallback Stream Extractor from active Piped instances
+ * Fallback Stream Extractor from active, healthy Piped instances
  */
 const fetchFallbackStreamFromInstances = async (videoId: string) => {
-  for (const instance of WORKING_PIPED_INSTANCES) {
+  const instances = getHealthyPipedInstances();
+  for (const instance of instances) {
     try {
       const res = await axios.get(`${instance}/streams/${videoId}`, {
-        timeout: 4000,
+        timeout: 4500,
       });
       const data = res.data;
       if (data) {
@@ -65,6 +85,7 @@ const fetchFallbackStreamFromInstances = async (videoId: string) => {
         }));
 
         if (streamUrl) {
+          recordInstanceSuccess(instance);
           return {
             streamUrl,
             audioStreamUrl: bestAudio,
@@ -73,7 +94,8 @@ const fetchFallbackStreamFromInstances = async (videoId: string) => {
         }
       }
     } catch {
-      // Continue to next mirror
+      recordInstanceFailure(instance);
+      // Continue to next healthy mirror
     }
   }
   return null;
@@ -129,52 +151,88 @@ export const getYouTubeClient = async (): Promise<Innertube> => {
   return innertubeInstance;
 };
 
-// 1. Fetch Home Feed (Personalized if signed in, Direct InnerTube Trending if signed out)
-export const fetchTrendingFeed = async (): Promise<AppVideoItem[]> => {
-  // Only attempt personalized feed if user has actual stored credentials
-  const storedCreds = await getStoredCredentials();
+const TRENDING_TOPICS = [
+  'trending videos music',
+  'latest entertainment viral videos',
+  'popular hindi bollywood songs hits',
+  'trending gaming and technology',
+  'new viral videos trending',
+  'popular podcasts comedy and music',
+  'trending news and documentaries',
+];
 
-  if (storedCreds) {
-    try {
-      const yt = await getYouTubeClient();
-      if (yt.session.logged_in) {
-        const feed = await yt.getHomeFeed();
-        const videos = feed.videos || [];
-        if (videos.length > 0) {
-          return videos.map((v: any) => {
-            const thumbnails = v.thumbnails || [];
-            const bestThumbnail = thumbnails[thumbnails.length - 1]?.url || '';
-
-            return {
-              id: v.id || '',
-              title: v.title?.text || v.title?.toString() || 'Untitled',
-              author: v.author?.name || 'Unknown Channel',
-              authorAvatar: v.author?.thumbnails?.[0]?.url,
-              channelId: v.author?.id,
-              thumbnail: bestThumbnail,
-              duration: v.duration?.text,
-              durationSeconds: v.duration?.seconds,
-              published: v.published?.text,
-              viewCount: v.views?.text || v.short_view_count?.text,
-            };
-          });
-        }
-      }
-    } catch {
-      // Personalized feed unavailable — silently fall through to trending
+/**
+ * 1. Fetch Home Feed with Infinite Pagination (Endless scrolling)
+ */
+export const fetchTrendingFeedWithContinuation = async (
+  continuationToken?: string,
+  pageIndex: number = 0
+): Promise<PaginatedVideosResult> => {
+  // If continuation token exists, load next batch directly
+  if (continuationToken) {
+    const result = await searchInnerTubeWithContinuation('', continuationToken);
+    if (result.videos.length > 0) {
+      return result;
     }
   }
 
-  // Fast, unthrottled Direct InnerTube Trending Feed (MediaServiceCore)
-  const directVideos = await searchInnerTubeDirect('trending videos music');
-  if (directVideos && directVideos.length > 0) {
-    return directVideos;
+  // Only attempt personalized feed if user has actual stored credentials and on initial load
+  if (pageIndex === 0) {
+    const storedCreds = await getStoredCredentials();
+    if (storedCreds) {
+      try {
+        const yt = await getYouTubeClient();
+        if (yt.session.logged_in) {
+          const feed = await yt.getHomeFeed();
+          const videos = feed.videos || [];
+          if (videos.length > 0) {
+            const mappedVideos: AppVideoItem[] = videos.map((v: any) => {
+              const thumbnails = v.thumbnails || [];
+              const bestThumbnail = thumbnails[thumbnails.length - 1]?.url || '';
+
+              return {
+                id: v.id || '',
+                title: v.title?.text || v.title?.toString() || 'Untitled',
+                author: v.author?.name || 'Unknown Channel',
+                authorAvatar: v.author?.thumbnails?.[0]?.url,
+                channelId: v.author?.id,
+                thumbnail: bestThumbnail,
+                duration: v.duration?.text,
+                durationSeconds: v.duration?.seconds,
+                published: v.published?.text,
+                viewCount: v.views?.text || v.short_view_count?.text,
+              };
+            });
+            return { videos: mappedVideos };
+          }
+        }
+      } catch {
+        // Personalized feed unavailable — silently fall through to trending
+      }
+    }
   }
 
-  return searchInnerTubeDirect('trending now');
+  // Rotate topic based on pageIndex to guarantee never-ending, rich fresh content
+  const topicIndex = pageIndex % TRENDING_TOPICS.length;
+  const topic = TRENDING_TOPICS[topicIndex];
+  return searchInnerTubeWithContinuation(topic);
 };
 
-// 2. Search Videos via Direct MediaServiceCore
+// 1b. Backward compatible fetchTrendingFeed
+export const fetchTrendingFeed = async (): Promise<AppVideoItem[]> => {
+  const result = await fetchTrendingFeedWithContinuation(undefined, 0);
+  return result.videos;
+};
+
+// 2. Search Videos with Infinite Pagination support
+export const searchYouTubeVideosWithContinuation = async (
+  query: string,
+  continuationToken?: string
+): Promise<PaginatedVideosResult> => {
+  return searchInnerTubeWithContinuation(query, continuationToken);
+};
+
+// 2b. Backward compatible search
 export const searchYouTubeVideos = async (query: string): Promise<AppVideoItem[]> => {
   return searchInnerTubeDirect(query);
 };
@@ -212,12 +270,16 @@ export const extractPlayableStream = async (videoId: string): Promise<PlayableSt
 
   try {
     const yt = await getYouTubeClient();
-    info = await yt.getInfo(videoId);
+    try {
+      info = await yt.getInfo(videoId, { client: 'ANDROID' });
+    } catch {
+      info = await yt.getInfo(videoId);
+    }
 
     if (info) {
       // 1. Try progressive combined stream (Video + Audio)
       try {
-        format = info.chooseFormat({ type: 'video+audio', quality: 'best' });
+        format = info.chooseFormat({ type: 'video+audio', quality: '360p' }) || info.chooseFormat({ type: 'video+audio', quality: 'best' });
         if (format) {
           rawUrl = await format.decipher(yt.session.player);
         }
@@ -351,7 +413,7 @@ export const extractPlayableStream = async (videoId: string): Promise<PlayableSt
     downloadUrl: rawUrl,
     captionTracks,
     availableQualities,
-    qualityLabel: format?.quality_label || '720p',
+    qualityLabel: format?.quality_label || '360p',
     views: info?.basic_info?.view_count?.toString(),
     published: info?.basic_info?.is_live ? 'Live' : undefined,
   };

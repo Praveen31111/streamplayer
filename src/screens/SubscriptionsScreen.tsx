@@ -32,15 +32,20 @@ export const SubscriptionsScreen = ({ navigation }: any) => {
 
   const checkAuthAndLoad = async () => {
     setIsLoading(true);
-    const loggedIn = await checkIsLoggedIn();
-    setIsLoggedIn(loggedIn);
+    try {
+      const loggedIn = await checkIsLoggedIn();
+      setIsLoggedIn(loggedIn);
 
-    const localChannels = await getSubscribedChannels();
-    setChannels(localChannels);
+      const localChannels = await getSubscribedChannels();
+      setChannels(localChannels || []);
 
-    const feed = await fetchUserSubscriptionsFeed();
-    setVideos(feed);
-    setIsLoading(false);
+      const feed = await fetchUserSubscriptionsFeed();
+      setVideos(feed || []);
+    } catch (err) {
+      console.warn('[SubscriptionsScreen] checkAuthAndLoad error caught:', err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -50,11 +55,16 @@ export const SubscriptionsScreen = ({ navigation }: any) => {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    const localChannels = await getSubscribedChannels();
-    setChannels(localChannels);
-    const feed = await fetchUserSubscriptionsFeed();
-    setVideos(feed);
-    setIsRefreshing(false);
+    try {
+      const localChannels = await getSubscribedChannels();
+      setChannels(localChannels || []);
+      const feed = await fetchUserSubscriptionsFeed();
+      setVideos(feed || []);
+    } catch (err) {
+      console.warn('[SubscriptionsScreen] handleRefresh error caught:', err);
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   const handleLoginPress = () => {

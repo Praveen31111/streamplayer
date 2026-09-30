@@ -1,17 +1,43 @@
 import * as SQLite from 'expo-sqlite';
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;
+let dbInitPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 export const getDb = async (): Promise<SQLite.SQLiteDatabase> => {
-  if (!dbInstance) {
-    dbInstance = await SQLite.openDatabaseAsync('custom_player.db');
-    await initializeTables(dbInstance);
+  if (dbInstance) {
+    return dbInstance;
   }
-  return dbInstance;
+
+  if (!dbInitPromise) {
+    dbInitPromise = (async () => {
+      try {
+        const db = await SQLite.openDatabaseAsync('custom_player.db');
+        try {
+          // Enable Write-Ahead Logging (WAL) for safe concurrent reads & writes on Android
+          await db.execAsync('PRAGMA journal_mode = WAL;');
+        } catch (pragmaErr) {
+          console.warn('[Database] WAL PRAGMA note:', pragmaErr);
+        }
+        try {
+          await initializeTables(db);
+        } catch (tableErr) {
+          console.warn('[Database] initializeTables note:', tableErr);
+        }
+        dbInstance = db;
+        return db;
+      } catch (error) {
+        dbInitPromise = null;
+        console.error('[Database] Failed to open SQLite database:', error);
+        throw error;
+      }
+    })();
+  }
+
+  return dbInitPromise;
 };
 
 const initializeTables = async (db: SQLite.SQLiteDatabase) => {
-  // 1. Cache Metadata
+  // Execute all table creation scripts in a single atomic batch
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS CacheMetadata (
       videoId TEXT PRIMARY KEY,
@@ -21,10 +47,7 @@ const initializeTables = async (db: SQLite.SQLiteDatabase) => {
       duration INTEGER,
       cachedAt INTEGER NOT NULL
     );
-  `);
 
-  // 2. Watch History
-  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS WatchHistory (
       videoId TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -34,10 +57,7 @@ const initializeTables = async (db: SQLite.SQLiteDatabase) => {
       totalDurationMillis INTEGER DEFAULT 0,
       updatedAt INTEGER NOT NULL
     );
-  `);
 
-  // 3. Offline Downloads
-  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS DownloadQueue (
       videoId TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -48,10 +68,7 @@ const initializeTables = async (db: SQLite.SQLiteDatabase) => {
       progress REAL DEFAULT 0.0,
       createdAt INTEGER NOT NULL
     );
-  `);
 
-  // 4. Saved Bookmarks / Favorites
-  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS SavedBookmarks (
       videoId TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -59,10 +76,7 @@ const initializeTables = async (db: SQLite.SQLiteDatabase) => {
       thumbnailUrl TEXT,
       savedAt INTEGER NOT NULL
     );
-  `);
 
-  // 5. User Channel Subscriptions (Local & Cloud Sync)
-  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS SubscribedChannels (
       channelId TEXT PRIMARY KEY,
       channelName TEXT NOT NULL,

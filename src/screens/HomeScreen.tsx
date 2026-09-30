@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,20 +10,37 @@ import {
   RefreshControl,
   Modal,
   Linking,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import { fetchTrendingFeed, searchYouTubeVideos, AppVideoItem } from '../api/youtubeClient';
+import {
+  fetchTrendingFeedWithContinuation,
+  searchYouTubeVideosWithContinuation,
+  fetchSearchSuggestions,
+  AppVideoItem,
+} from '../api';
 import { prewarmVideoStream } from '../player/streamPrewarmer';
 import { startGoogleSignIn, signOutGoogle, checkIsLoggedIn, AuthPromptData } from '../auth/authService';
 
 export const HomeScreen = ({ navigation }: any) => {
   const [videos, setVideos] = useState<AppVideoItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  // Pagination & Continuation Refs for infinite scroll
+  const isFetchingMoreRef = useRef(false);
+  const homeContinuationTokenRef = useRef<string | undefined>(undefined);
+  const searchContinuationTokenRef = useRef<string | undefined>(undefined);
+  const homePageIndexRef = useRef(0);
 
   // Auth Dialog Modal
   const [authData, setAuthData] = useState<AuthPromptData | null>(null);
@@ -31,18 +48,28 @@ export const HomeScreen = ({ navigation }: any) => {
 
   const loadFeedData = async () => {
     setIsLoading(true);
-    const loggedIn = await checkIsLoggedIn();
-    setIsLoggedIn(loggedIn);
+    homeContinuationTokenRef.current = undefined;
+    searchContinuationTokenRef.current = undefined;
+    homePageIndexRef.current = 0;
 
-    const data = await fetchTrendingFeed();
-    setVideos(data);
-    setIsLoading(false);
+    try {
+      const loggedIn = await checkIsLoggedIn();
+      setIsLoggedIn(loggedIn);
 
-    // SmartTube-style background pre-warming for zero-lag playback
-    if (data && data.length > 0) {
-      data.slice(0, 4).forEach(v => {
-        if (v.id) prewarmVideoStream(v.id);
-      });
+      const data = await fetchTrendingFeedWithContinuation(undefined, 0);
+      setVideos(data.videos || []);
+      homeContinuationTokenRef.current = data.continuationToken;
+
+      // SmartTube-style background pre-warming for zero-lag playback
+      if (data.videos && data.videos.length > 0) {
+        data.videos.slice(0, 4).forEach(v => {
+          if (v.id) prewarmVideoStream(v.id);
+        });
+      }
+    } catch (err) {
+      console.warn('[HomeScreen] loadFeedData error caught:', err);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -53,24 +80,142 @@ export const HomeScreen = ({ navigation }: any) => {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    if (searchQuery.trim()) {
-      const results = await searchYouTubeVideos(searchQuery);
-      setVideos(results);
-    } else {
-      await loadFeedData();
+    try {
+      if (searchQuery.trim()) {
+        searchContinuationTokenRef.current = undefined;
+        const results = await searchYouTubeVideosWithContinuation(searchQuery.trim());
+        setVideos(results.videos || []);
+        searchContinuationTokenRef.current = results.continuationToken;
+      } else {
+        await loadFeedData();
+      }
+    } catch (err) {
+      console.warn('[HomeScreen] handleRefresh error caught:', err);
+    } finally {
+      setIsRefreshing(false);
     }
-    setIsRefreshing(false);
   };
 
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) {
+  const handleLoadMore = async () => {
+    if (isLoading || isRefreshing || isFetchingMoreRef.current) return;
+    if (videos.length === 0) return;
+
+    isFetchingMoreRef.current = true;
+    setIsFetchingMore(true);
+
+    try {
+      const isSearching = searchQuery.trim().length > 0;
+
+      if (isSearching) {
+        const token = searchContinuationTokenRef.current;
+        if (!token) {
+          return;
+        }
+
+        const result = await searchYouTubeVideosWithContinuation('', token);
+        searchContinuationTokenRef.current = result.continuationToken;
+
+        if (result.videos.length > 0) {
+          setVideos(prev => {
+            const existingIds = new Set(prev.map(v => v.id));
+            const newVideos = result.videos.filter(v => !existingIds.has(v.id));
+            return [...prev, ...newVideos];
+          });
+
+          if (result.videos[0]?.id) {
+            prewarmVideoStream(result.videos[0].id);
+          }
+        }
+      } else {
+        // Endless Home feed pagination
+        homePageIndexRef.current += 1;
+        const token = homeContinuationTokenRef.current;
+
+        const result = await fetchTrendingFeedWithContinuation(token, homePageIndexRef.current);
+        homeContinuationTokenRef.current = result.continuationToken;
+
+        if (result.videos.length > 0) {
+          setVideos(prev => {
+            const existingIds = new Set(prev.map(v => v.id));
+            const newVideos = result.videos.filter(v => !existingIds.has(v.id));
+            return [...prev, ...newVideos];
+          });
+
+          if (result.videos[0]?.id) {
+            prewarmVideoStream(result.videos[0].id);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[HomeScreen] handleLoadMore error:', err);
+    } finally {
+      isFetchingMoreRef.current = false;
+      setIsFetchingMore(false);
+    }
+  };
+
+  const handleQueryChange = (text: string) => {
+    setSearchQuery(text);
+
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    if (!text.trim()) {
+      setSuggestions([]);
+      return;
+    }
+
+    // Fast 150ms debounce for smooth typing
+    searchTimeoutRef.current = setTimeout(async () => {
+      const list = await fetchSearchSuggestions(text);
+      setSuggestions(list);
+    }, 150);
+  };
+
+  const handleSelectSuggestion = (suggestion: string) => {
+    setSearchQuery(suggestion);
+    setSuggestions([]);
+    setIsSearchFocused(false);
+    Keyboard.dismiss();
+    executeSearch(suggestion);
+  };
+
+  const handleAppendSuggestion = (suggestion: string) => {
+    setSearchQuery(suggestion);
+    handleQueryChange(suggestion);
+  };
+
+  const executeSearch = async (queryText?: string) => {
+    const q = (queryText !== undefined ? queryText : searchQuery).trim();
+    setSuggestions([]);
+    setIsSearchFocused(false);
+    Keyboard.dismiss();
+
+    if (!q) {
       loadFeedData();
       return;
     }
+
     setIsLoading(true);
-    const results = await searchYouTubeVideos(searchQuery);
-    setVideos(results);
-    setIsLoading(false);
+    searchContinuationTokenRef.current = undefined;
+
+    try {
+      const results = await searchYouTubeVideosWithContinuation(q);
+      setVideos(results.videos || []);
+      searchContinuationTokenRef.current = results.continuationToken;
+
+      // Prewarm top 3 results
+      if (results.videos && results.videos.length > 0) {
+        results.videos.slice(0, 3).forEach(v => {
+          if (v.id) prewarmVideoStream(v.id);
+        });
+      }
+    } catch (err) {
+      console.warn('[HomeScreen] executeSearch error caught:', err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleLoginPress = () => {
@@ -191,16 +336,66 @@ export const HomeScreen = ({ navigation }: any) => {
             placeholderTextColor="#777"
             style={styles.searchInput}
             value={searchQuery}
-            onChangeText={setSearchQuery}
-            onSubmitEditing={handleSearch}
+            onChangeText={handleQueryChange}
+            onFocus={() => {
+              setIsSearchFocused(true);
+              if (searchQuery.trim()) {
+                fetchSearchSuggestions(searchQuery).then(setSuggestions);
+              }
+            }}
+            onSubmitEditing={() => executeSearch()}
             returnKeyType="search"
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => { setSearchQuery(''); loadFeedData(); }}>
+            <TouchableOpacity
+              onPress={() => {
+                setSearchQuery('');
+                setSuggestions([]);
+                searchContinuationTokenRef.current = undefined;
+                loadFeedData();
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
               <Ionicons name="close-circle" size={18} color="#888" />
             </TouchableOpacity>
           )}
         </View>
+
+        {/* Real-time Search Autocomplete Suggestions Dropdown */}
+        {isSearchFocused && suggestions.length > 0 && (
+          <View style={styles.suggestionsContainer}>
+            <FlatList
+              data={suggestions}
+              keyExtractor={(item, index) => `${item}-${index}`}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.suggestionItem}
+                  onPress={() => handleSelectSuggestion(item)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="search-outline" size={18} color="#888888" style={{ marginRight: 12 }} />
+                  <Text style={styles.suggestionText} numberOfLines={1}>
+                    {item}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.suggestionArrowBtn}
+                    onPress={() => handleAppendSuggestion(item)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons
+                      name="arrow-back-outline"
+                      size={16}
+                      color="#777777"
+                      style={{ transform: [{ rotate: '45deg' }] }}
+                    />
+                  </TouchableOpacity>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        )}
       </View>
 
       {/* Videos List */}
@@ -212,9 +407,31 @@ export const HomeScreen = ({ navigation }: any) => {
       ) : (
         <FlatList
           data={videos}
-          keyExtractor={(item, index) => item.id || index.toString()}
+          keyExtractor={(item, index) => `${item.id || 'vid'}-${index}`}
           renderItem={renderVideoCard}
           contentContainerStyle={styles.listContent}
+          onScrollBeginDrag={() => {
+            setIsSearchFocused(false);
+            Keyboard.dismiss();
+          }}
+          onTouchStart={() => {
+            if (isSearchFocused) {
+              setIsSearchFocused(false);
+              Keyboard.dismiss();
+            }
+          }}
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={
+            isFetchingMore ? (
+              <View style={styles.footerLoader}>
+                <ActivityIndicator size="small" color="#FF0000" />
+                <Text style={styles.footerLoaderText}>Loading more content...</Text>
+              </View>
+            ) : (
+              <View style={{ height: 28 }} />
+            )
+          }
           refreshControl={
             <RefreshControl
               refreshing={isRefreshing}
@@ -284,6 +501,43 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#252525',
     gap: 10,
+    zIndex: 100,
+    position: 'relative',
+  },
+  suggestionsContainer: {
+    position: 'absolute',
+    top: 98,
+    left: 16,
+    right: 16,
+    backgroundColor: '#1C1C24',
+    borderRadius: 14,
+    zIndex: 999,
+    maxHeight: 280,
+    elevation: 10,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45,
+    shadowRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    overflow: 'hidden',
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  suggestionText: {
+    flex: 1,
+    color: '#F0F0F0',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  suggestionArrowBtn: {
+    padding: 6,
   },
   topRow: {
     flexDirection: 'row',
@@ -470,4 +724,16 @@ const styles = StyleSheet.create({
   waitingText: { color: '#777', fontSize: 12, fontStyle: 'italic' },
   cancelBtn: { marginTop: 8 },
   cancelText: { color: '#AAA', fontSize: 14 },
+  footerLoader: {
+    paddingVertical: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  footerLoaderText: {
+    color: '#AAAAAA',
+    fontSize: 13,
+    fontWeight: '500',
+  },
 });

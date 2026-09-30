@@ -4,3 +4,4 @@ export * from './videoCache';
 export * from './streamPrewarmer';
 export * from './dashManifestBuilder';
 export * from './subtitleService';
+export * from './playerCoordinator';

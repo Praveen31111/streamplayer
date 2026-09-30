@@ -28,20 +28,25 @@ export const LibraryScreen = ({ navigation }: any) => {
 
   const loadData = async () => {
     setIsLoading(true);
-    const loggedIn = await checkIsLoggedIn();
-    setIsLoggedIn(loggedIn);
+    try {
+      const loggedIn = await checkIsLoggedIn();
+      setIsLoggedIn(loggedIn);
 
-    const historyData = await getWatchHistory();
-    setHistory(historyData);
+      const historyData = await getWatchHistory();
+      setHistory(historyData || []);
 
-    const bookmarksData = await getBookmarks();
-    setBookmarks(bookmarksData);
+      const bookmarksData = await getBookmarks();
+      setBookmarks(bookmarksData || []);
 
-    if (loggedIn) {
-      const lib = await fetchUserLibrary();
-      setUserLibrary(lib);
+      if (loggedIn) {
+        const lib = await fetchUserLibrary();
+        setUserLibrary(lib);
+      }
+    } catch (err) {
+      console.warn('[LibraryScreen] loadData error caught:', err);
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   useEffect(() => {

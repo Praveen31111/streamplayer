@@ -19,12 +19,17 @@ export const setCachedMetadata = async (
   thumbnailUrl: string,
   duration: number
 ): Promise<void> => {
-  const db = await getDb();
-  await db.runAsync(
-    `INSERT OR REPLACE INTO CacheMetadata (videoId, title, author, thumbnailUrl, duration, cachedAt)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [videoId, title, author, thumbnailUrl, duration, Date.now()]
-  );
+  if (!videoId) return;
+  try {
+    const db = await getDb();
+    await db.runAsync(
+      `INSERT OR REPLACE INTO CacheMetadata (videoId, title, author, thumbnailUrl, duration, cachedAt)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [videoId, title || 'Video', author || '', thumbnailUrl || '', duration || 0, Date.now()]
+    );
+  } catch (error) {
+    console.warn('[CacheRepo] setCachedMetadata error:', error);
+  }
 };
 
 /**
@@ -34,16 +39,22 @@ export const getCachedMetadata = async (
   videoId: string,
   maxAgeMs: number = 24 * 60 * 60 * 1000
 ): Promise<CacheMetadataItem | null> => {
-  const db = await getDb();
-  const row = await db.getFirstAsync<CacheMetadataItem>(
-    `SELECT * FROM CacheMetadata WHERE videoId = ?`,
-    [videoId]
-  );
-  if (!row) return null;
-  if (Date.now() - row.cachedAt > maxAgeMs) {
+  if (!videoId) return null;
+  try {
+    const db = await getDb();
+    const row = await db.getFirstAsync<CacheMetadataItem>(
+      `SELECT * FROM CacheMetadata WHERE videoId = ?`,
+      [videoId]
+    );
+    if (!row) return null;
+    if (Date.now() - row.cachedAt > maxAgeMs) {
+      return null;
+    }
+    return row;
+  } catch (error) {
+    console.warn('[CacheRepo] getCachedMetadata error:', error);
     return null;
   }
-  return row;
 };
 
 /**
@@ -52,7 +63,11 @@ export const getCachedMetadata = async (
 export const purgeExpiredCache = async (
   maxAgeMs: number = 7 * 24 * 60 * 60 * 1000
 ): Promise<void> => {
-  const db = await getDb();
-  const threshold = Date.now() - maxAgeMs;
-  await db.runAsync(`DELETE FROM CacheMetadata WHERE cachedAt < ?`, [threshold]);
+  try {
+    const db = await getDb();
+    const threshold = Date.now() - maxAgeMs;
+    await db.runAsync(`DELETE FROM CacheMetadata WHERE cachedAt < ?`, [threshold]);
+  } catch (error) {
+    console.warn('[CacheRepo] purgeExpiredCache error:', error);
+  }
 };

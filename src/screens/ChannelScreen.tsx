@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,13 +6,13 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   FlatList,
-  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import { fetchChannelDetailsDirect } from '../api/mediaServiceCore';
+import { fetchChannelDetailsDirect, fetchChannelMoreVideosDirect } from '../api/mediaServiceCore';
 import { ChannelDetails, AppVideoItem, ChannelPlaylistItem } from '../api/types';
+import { stopGlobalAudio } from '../player';
 import {
   toggleChannelSubscription,
   checkChannelSubscriptionStatus,
@@ -24,6 +24,8 @@ export const ChannelScreen = ({ route, navigation }: any) => {
 
   const [channelData, setChannelData] = useState<ChannelDetails | null>(null);
   const [loading, setLoading] = useState<boolean>(Boolean(channelId));
+  const [loadingMore, setLoadingMore] = useState<boolean>(false);
+  const [continuationToken, setContinuationToken] = useState<string | undefined>(undefined);
   const [isSubscribed, setIsSubscribed] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'videos' | 'playlists'>('videos');
 
@@ -33,17 +35,47 @@ export const ChannelScreen = ({ route, navigation }: any) => {
     }
 
     // 1. Check local subscription status
-    checkChannelSubscriptionStatus(channelId).then(sub => setIsSubscribed(sub));
+    checkChannelSubscriptionStatus(channelId).then(sub => setIsSubscribed(sub)).catch(() => {});
 
-    // 2. Fetch Live Channel Profile
+    // 2. Fetch Live Channel Profile & Uploaded Videos
     fetchChannelDetailsDirect(channelId)
       .then(data => {
         if (data) {
           setChannelData(data);
+          setContinuationToken(data.continuationToken);
         }
+      })
+      .catch(err => {
+        console.warn('[ChannelScreen] fetchChannelDetailsDirect error caught:', err);
       })
       .finally(() => setLoading(false));
   }, [channelId]);
+
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || !continuationToken || activeTab !== 'videos') return;
+
+    setLoadingMore(true);
+    try {
+      const channelTitle = channelData?.title || initialTitle || 'Channel';
+      const result = await fetchChannelMoreVideosDirect(continuationToken, channelTitle);
+      if (result.videos.length > 0) {
+        setChannelData(prev => {
+          if (!prev) return prev;
+          const existingIds = new Set(prev.videos.map(v => v.id));
+          const newVideos = result.videos.filter(v => !existingIds.has(v.id));
+          return {
+            ...prev,
+            videos: [...prev.videos, ...newVideos],
+          };
+        });
+      }
+      setContinuationToken(result.nextContinuationToken);
+    } catch (e) {
+      console.warn('Failed to load more channel videos:', e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, continuationToken, activeTab, channelData, initialTitle]);
 
   const handleSubscribeToggle = async () => {
     const nextSub = !isSubscribed;
@@ -57,13 +89,14 @@ export const ChannelScreen = ({ route, navigation }: any) => {
     <TouchableOpacity
       style={styles.videoCard}
       activeOpacity={0.8}
-      onPress={() =>
+      onPress={() => {
+        stopGlobalAudio();
         navigation.navigate('PlayerDetail', {
           videoId: item.id,
           title: item.title,
           author: item.author || channelData?.title || initialTitle,
-        })
-      }
+        });
+      }}
     >
       <View style={styles.thumbnailContainer}>
         <Image source={{ uri: item.thumbnail }} style={styles.thumbnail} contentFit="cover" />
@@ -91,7 +124,7 @@ export const ChannelScreen = ({ route, navigation }: any) => {
       style={styles.playlistCard}
       activeOpacity={0.8}
       onPress={() => {
-        // Can open playlist or search videos in this playlist
+        stopGlobalAudio();
         navigation.navigate('PlayerDetail', {
           videoId: item.id,
           title: item.title,
@@ -124,6 +157,85 @@ export const ChannelScreen = ({ route, navigation }: any) => {
   const channelTitle = channelData?.title || initialTitle || 'YouTube Channel';
   const avatarUrl = channelData?.avatar || initialAvatar;
 
+  const renderHeader = () => (
+    <View>
+      {/* Channel Banner */}
+      {channelData?.banner ? (
+        <Image source={{ uri: channelData.banner }} style={styles.bannerImage} contentFit="cover" />
+      ) : (
+        <View style={styles.bannerPlaceholder} />
+      )}
+
+      {/* Profile Header */}
+      <View style={styles.profileSection}>
+        <View style={styles.avatarRow}>
+          {avatarUrl ? (
+            <Image source={{ uri: avatarUrl }} style={styles.channelAvatar} contentFit="cover" />
+          ) : (
+            <View style={[styles.channelAvatar, styles.avatarPlaceholder]}>
+              <Ionicons name="person" size={36} color="#888" />
+            </View>
+          )}
+
+          <View style={styles.headerInfo}>
+            <Text style={styles.channelHeading} numberOfLines={1}>
+              {channelTitle}
+            </Text>
+            <Text style={styles.statsText}>
+              {channelData?.subscriberCount ? `${channelData.subscriberCount} ` : ''}
+              {channelData?.videosCount ? `• ${channelData.videosCount}` : ''}
+            </Text>
+          </View>
+        </View>
+
+        {/* Description Preview */}
+        {channelData?.description ? (
+          <Text style={styles.channelDesc} numberOfLines={2}>
+            {channelData.description}
+          </Text>
+        ) : null}
+
+        {/* Subscribe Action Button */}
+        <TouchableOpacity
+          style={[styles.subButton, isSubscribed && styles.subButtonActive]}
+          activeOpacity={0.8}
+          onPress={handleSubscribeToggle}
+        >
+          <Ionicons
+            name={isSubscribed ? 'checkmark-circle' : 'notifications-outline'}
+            size={18}
+            color={isSubscribed ? '#00E676' : '#000000'}
+            style={{ marginRight: 6 }}
+          />
+          <Text style={[styles.subBtnLabel, isSubscribed && styles.subBtnLabelActive]}>
+            {isSubscribed ? 'Subscribed' : 'Subscribe'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Tab Selector: Videos / Playlists */}
+      <View style={styles.tabBar}>
+        <TouchableOpacity
+          style={[styles.tabItem, activeTab === 'videos' && styles.tabItemActive]}
+          onPress={() => setActiveTab('videos')}
+        >
+          <Text style={[styles.tabText, activeTab === 'videos' && styles.tabTextActive]}>
+            Videos ({channelData?.videos?.length || 0})
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.tabItem, activeTab === 'playlists' && styles.tabItemActive]}
+          onPress={() => setActiveTab('playlists')}
+        >
+          <Text style={[styles.tabText, activeTab === 'playlists' && styles.tabTextActive]}>
+            Playlists ({channelData?.playlists?.length || 0})
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {/* Top Navigation Bar */}
@@ -142,113 +254,40 @@ export const ChannelScreen = ({ route, navigation }: any) => {
           <Text style={styles.loadingText}>Loading Channel Profile...</Text>
         </View>
       ) : (
-        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-          {/* Channel Banner */}
-          {channelData?.banner ? (
-            <Image source={{ uri: channelData.banner }} style={styles.bannerImage} contentFit="cover" />
-          ) : (
-            <View style={styles.bannerPlaceholder} />
-          )}
-
-          {/* Profile Header */}
-          <View style={styles.profileSection}>
-            <View style={styles.avatarRow}>
-              {avatarUrl ? (
-                <Image source={{ uri: avatarUrl }} style={styles.channelAvatar} contentFit="cover" />
-              ) : (
-                <View style={[styles.channelAvatar, styles.avatarPlaceholder]}>
-                  <Ionicons name="person" size={36} color="#888" />
-                </View>
-              )}
-
-              <View style={styles.headerInfo}>
-                <Text style={styles.channelHeading} numberOfLines={1}>
-                  {channelTitle}
-                </Text>
-                <Text style={styles.statsText}>
-                  {channelData?.subscriberCount ? `${channelData.subscriberCount} ` : ''}
-                  {channelData?.videosCount ? `• ${channelData.videosCount}` : ''}
-                </Text>
+        <FlatList
+          data={activeTab === 'videos' ? (channelData?.videos || []) : (channelData?.playlists || [])}
+          keyExtractor={(item: any) => item.id}
+          renderItem={activeTab === 'videos' ? (renderVideoItem as any) : (renderPlaylistItem as any)}
+          ListHeaderComponent={renderHeader}
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={styles.footerLoading}>
+                <ActivityIndicator size="small" color="#FF0000" />
+                <Text style={styles.footerLoadingText}>Loading more videos...</Text>
               </View>
-            </View>
-
-            {/* Description Preview */}
-            {channelData?.description ? (
-              <Text style={styles.channelDesc} numberOfLines={2}>
-                {channelData.description}
-              </Text>
-            ) : null}
-
-            {/* Subscribe Action Button */}
-            <TouchableOpacity
-              style={[styles.subButton, isSubscribed && styles.subButtonActive]}
-              activeOpacity={0.8}
-              onPress={handleSubscribeToggle}
-            >
-              <Ionicons
-                name={isSubscribed ? 'checkmark-circle' : 'notifications-outline'}
-                size={18}
-                color={isSubscribed ? '#00E676' : '#000000'}
-                style={{ marginRight: 6 }}
-              />
-              <Text style={[styles.subBtnLabel, isSubscribed && styles.subBtnLabelActive]}>
-                {isSubscribed ? 'Subscribed' : 'Subscribe'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Tab Selector: Videos / Playlists */}
-          <View style={styles.tabBar}>
-            <TouchableOpacity
-              style={[styles.tabItem, activeTab === 'videos' && styles.tabItemActive]}
-              onPress={() => setActiveTab('videos')}
-            >
-              <Text style={[styles.tabText, activeTab === 'videos' && styles.tabTextActive]}>
-                Videos ({channelData?.videos?.length || 0})
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.tabItem, activeTab === 'playlists' && styles.tabItemActive]}
-              onPress={() => setActiveTab('playlists')}
-            >
-              <Text style={[styles.tabText, activeTab === 'playlists' && styles.tabTextActive]}>
-                Playlists ({channelData?.playlists?.length || 0})
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Tab Content */}
-          {activeTab === 'videos' ? (
-            channelData?.videos && channelData.videos.length > 0 ? (
-              <FlatList
-                data={channelData.videos}
-                keyExtractor={item => item.id}
-                renderItem={renderVideoItem}
-                scrollEnabled={false}
-                contentContainerStyle={styles.listContent}
-              />
-            ) : (
+            ) : null
+          }
+          ListEmptyComponent={
+            !loading ? (
               <View style={styles.emptyContainer}>
-                <Ionicons name="videocam-outline" size={48} color="#555" />
-                <Text style={styles.emptyText}>No videos found for this channel.</Text>
+                <Ionicons
+                  name={activeTab === 'videos' ? 'videocam-outline' : 'albums-outline'}
+                  size={48}
+                  color="#555"
+                />
+                <Text style={styles.emptyText}>
+                  {activeTab === 'videos'
+                    ? 'No videos found for this channel.'
+                    : 'No public playlists found.'}
+                </Text>
               </View>
-            )
-          ) : channelData?.playlists && channelData.playlists.length > 0 ? (
-            <FlatList
-              data={channelData.playlists}
-              keyExtractor={item => item.id}
-              renderItem={renderPlaylistItem}
-              scrollEnabled={false}
-              contentContainerStyle={styles.listContent}
-            />
-          ) : (
-            <View style={styles.emptyContainer}>
-              <Ionicons name="albums-outline" size={48} color="#555" />
-              <Text style={styles.emptyText}>No public playlists found.</Text>
-            </View>
-          )}
-        </ScrollView>
+            ) : null
+          }
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.6}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.listContent}
+        />
       )}
     </SafeAreaView>
   );
@@ -497,5 +536,16 @@ const styles = StyleSheet.create({
     color: '#666666',
     fontSize: 13,
     marginTop: 10,
+  },
+  footerLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+  },
+  footerLoadingText: {
+    color: '#888888',
+    fontSize: 12,
+    marginLeft: 8,
   },
 });

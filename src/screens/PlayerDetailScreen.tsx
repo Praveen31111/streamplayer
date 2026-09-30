@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import { CustomVideoPlayer, getPrewarmedStream } from '../player';
+import { CustomVideoPlayer, getPrewarmedStream, stopGlobalAudio } from '../player';
 import {
   extractPlayableStream,
   PlayableStreamResult,
@@ -46,6 +46,8 @@ export const PlayerDetailScreen = ({ route, navigation }: any) => {
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
   useEffect(() => {
+    stopGlobalAudio();
+
     const initPlayer = async () => {
       if (offlineUri) {
         // Offline playback mode
@@ -66,7 +68,7 @@ export const PlayerDetailScreen = ({ route, navigation }: any) => {
       }
 
       // Check bookmark status
-      isBookmarked(videoId).then(val => setIsSavedBookmark(val));
+      isBookmarked(videoId).then(val => setIsSavedBookmark(val)).catch(() => {});
 
       // Instant Playback from Pre-warmed Memory Cache (if available)
       const prewarmed = getPrewarmedStream(videoId);
@@ -76,6 +78,7 @@ export const PlayerDetailScreen = ({ route, navigation }: any) => {
         setActiveQuality(prewarmed.qualityLabel || '720p');
         setIsLoading(false);
       } else {
+        setIsLoading(true);
         // Live Stream Extraction
         try {
           const data = await extractPlayableStream(videoId);
@@ -83,7 +86,7 @@ export const PlayerDetailScreen = ({ route, navigation }: any) => {
           setActiveStreamUrl(data.streamUrl);
           setActiveQuality(data.qualityLabel || '720p');
           if (data?.channelId) {
-            checkChannelSubscriptionStatus(data.channelId).then(sub => setIsSubscribed(sub));
+            checkChannelSubscriptionStatus(data.channelId).then(sub => setIsSubscribed(sub)).catch(() => {});
           }
         } catch (err) {
           console.error('Extraction error:', err);
@@ -95,21 +98,37 @@ export const PlayerDetailScreen = ({ route, navigation }: any) => {
 
       // Check prewarmed subscription status
       if (prewarmed?.channelId) {
-        checkChannelSubscriptionStatus(prewarmed.channelId).then(sub => setIsSubscribed(sub));
+        checkChannelSubscriptionStatus(prewarmed.channelId).then(sub => setIsSubscribed(sub)).catch(() => {});
       }
 
       // Fetch comments and related videos
-      fetchVideoComments(videoId).then(c => setComments(c));
-      fetchRelatedVideos(videoId, initialTitle).then(r => setRelatedVideos(r));
+      fetchVideoComments(videoId).then(c => setComments(c)).catch(() => {});
+      fetchRelatedVideos(videoId, initialTitle).then(r => setRelatedVideos(r)).catch(() => {});
     };
 
     initPlayer();
+
+    return () => {
+      stopGlobalAudio();
+    };
   }, [videoId, offlineUri, initialTitle, initialAuthor]);
 
   const handleQualityChange = (_url: string, label: string) => {
     // Quality change is handled natively inside CustomVideoPlayer with exact timestamp lock.
     // We only update the quality label badge to prevent parent re-renders from re-initializing the player.
     setActiveQuality(label);
+  };
+
+  const handlePlayNextVideo = () => {
+    if (relatedVideos.length > 0) {
+      const next = relatedVideos[0];
+      navigation.replace('PlayerDetail', {
+        videoId: next.id,
+        title: next.title,
+        author: next.author,
+        thumbnailUrl: next.thumbnail,
+      });
+    }
   };
 
   const handleDownload = async () => {
@@ -188,6 +207,7 @@ export const PlayerDetailScreen = ({ route, navigation }: any) => {
         </View>
       ) : activeStreamUrl ? (
         <CustomVideoPlayer
+          key={videoId}
           videoId={videoId}
           streamUrl={activeStreamUrl}
           audioStreamUrl={streamData?.audioStreamUrl}
@@ -201,9 +221,13 @@ export const PlayerDetailScreen = ({ route, navigation }: any) => {
           audioTracks={streamData?.audioTracks}
           activeAudioTrackId={streamData?.activeAudioTrackId}
           captionTracks={streamData?.captionTracks}
+          userAgent={streamData?.clientUserAgent}
+          durationSeconds={streamData?.durationSeconds}
           onQualityChange={handleQualityChange}
           onFullscreenChange={setIsFullscreen}
           onClose={() => navigation.goBack()}
+          nextVideo={relatedVideos.length > 0 ? relatedVideos[0] : null}
+          onPlayNextVideo={handlePlayNextVideo}
         />
       ) : (
         <View style={styles.playerLoading}>
@@ -273,6 +297,7 @@ export const PlayerDetailScreen = ({ route, navigation }: any) => {
                 activeOpacity={0.7}
                 onPress={() => {
                   if (streamData.channelId) {
+                    stopGlobalAudio();
                     navigation.navigate('Channel', {
                       channelId: streamData.channelId,
                       channelTitle: streamData.author,

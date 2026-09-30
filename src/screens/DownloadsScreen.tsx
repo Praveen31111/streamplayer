@@ -18,9 +18,14 @@ export const DownloadsScreen = ({ navigation }: any) => {
 
   const loadDownloads = async () => {
     setIsLoading(true);
-    const data = await getCompletedDownloads();
-    setDownloads(data);
-    setIsLoading(false);
+    try {
+      const data = await getCompletedDownloads();
+      setDownloads(data || []);
+    } catch (err) {
+      console.warn('[DownloadsScreen] loadDownloads error caught:', err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {

@@ -1,0 +1,69 @@
+{
+  "version": "1.2.0",
+  "clientProfiles": [
+    {
+      "id": "android-vr",
+      "name": "Android VR / Quest Client",
+      "clientName": "ANDROID_VR",
+      "clientVersion": "1.61.48",
+      "userAgent": "Mozilla/5.0 (Linux; Android 12; Quest 3) AppleWebKit/537.36 (KHTML, like Gecko) OculusBrowser/32.0.0.0 Safari/537.36",
+      "clientNameHeader": "28",
+      "osName": "Android",
+      "osVersion": "12",
+      "hl": "en",
+      "gl": "IN"
+    },
+    {
+      "id": "tv-embedded",
+      "name": "SmartTV Simply Embedded",
+      "clientName": "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+      "clientVersion": "2.0",
+      "userAgent": "Mozilla/5.0 (PlayStation; PlayStation 4/11.02) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.0 Safari/605.1.15",
+      "clientNameHeader": "85",
+      "hl": "en",
+      "gl": "IN"
+    },
+    {
+      "id": "android-main",
+      "name": "Android Official Mobile",
+      "clientName": "ANDROID",
+      "clientVersion": "20.10.38",
+      "userAgent": "com.google.android.youtube/20.10.38 (Linux; U; Android 11) gzip",
+      "clientNameHeader": "3",
+      "osName": "Android",
+      "osVersion": "11",
+      "hl": "en",
+      "gl": "IN"
+    },
+    {
+      "id": "web-desktop",
+      "name": "Web Desktop Client",
+      "clientName": "WEB",
+      "clientVersion": "2.20240101.00.00",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      "clientNameHeader": "1",
+      "hl": "en",
+      "gl": "IN"
+    }
+  ],
+  "pipedInstances": [
+    "https://pa.il.ax",
+    "https://piped.video",
+    "https://api.piped.privacy.com.de",
+    "https://pipedapi.kavin.rocks",
+    "https://piped-api.lunar.icu"
+  ],
+  "invidiousInstances": [
+    "https://inv.nadeko.net",
+    "https://invidious.nerdvpn.de",
+    "https://yewtu.be",
+    "https://vid.puffyan.us"
+  ],
+  "enableSponsorBlock": true,
+  "defaultAudioMode": true,
+  "autoFailover": true,
+  "remoteEndpoints": [
+    "https://raw.githubusercontent.com/Praveen31111/streamplayer/main/api-config.json",
+    "https://cdn.jsdelivr.net/gh/Praveen31111/streamplayer@main/api-config.json"
+  ]
+}

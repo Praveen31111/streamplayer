@@ -11,6 +11,11 @@ export interface AppVideoItem {
   viewCount?: string;
 }
 
+export interface PaginatedVideosResult {
+  videos: AppVideoItem[];
+  continuationToken?: string;
+}
+
 export interface StreamFormatOption {
   qualityLabel: string;
   url: string;
@@ -61,6 +66,7 @@ export interface PlayableStreamResult {
   published?: string;
   rawVideoFormats?: any[];
   rawAudioFormats?: any[];
+  clientUserAgent?: string;
 }
 
 export interface ChannelPlaylistItem {
@@ -80,6 +86,7 @@ export interface ChannelDetails {
   description?: string;
   videos: AppVideoItem[];
   playlists: ChannelPlaylistItem[];
+  continuationToken?: string;
 }
 
 export interface VideoComment {
