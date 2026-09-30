@@ -1,5 +1,6 @@
 import { AppState, AppStateStatus } from 'react-native';
 import { createVideoPlayer, VideoPlayer } from 'expo-video';
+import * as FileSystem from 'expo-file-system/legacy';
 import { extractPlayableStream } from '../api';
 
 interface VideoMeta {
@@ -8,12 +9,18 @@ interface VideoMeta {
   thumbnail?: string;
 }
 
+// 0.1s valid 8000Hz 16-bit PCM silent WAV - zero CPU overhead, loops seamlessly
+const SILENT_WAV_BASE64 =
+  'UklGRmQGAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YUAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+
 class NativeBackgroundAudioBridge {
   private activeVideoId: string | null = null;
   private lastReportedTime: number = 0;
   private isWebViewPlaying: boolean = false;
   private audioStreamUrl: string | null = null;
   private player: VideoPlayer | null = null;
+  private focusKeeperPlayer: VideoPlayer | null = null;
+  private silentUri: string | null = null;
   private activeMeta: VideoMeta = {};
   private isPrewarming: boolean = false;
   private wasPlayingInBackground: boolean = false;
@@ -21,7 +28,51 @@ class NativeBackgroundAudioBridge {
   private injectResumeCallback: ((timeSec: number) => void) | null = null;
 
   constructor() {
+    this.initSilentFile();
     this.initAppStateListener();
+  }
+
+  private async initSilentFile() {
+    try {
+      const targetUri = `${FileSystem.cacheDirectory}audio_keeper.wav`;
+      const fileInfo = await FileSystem.getInfoAsync(targetUri);
+      if (!fileInfo.exists) {
+        await FileSystem.writeAsStringAsync(targetUri, SILENT_WAV_BASE64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      }
+      this.silentUri = targetUri;
+      this.setupFocusKeeper();
+    } catch (err) {
+      console.warn('[BackgroundAudioBridge] Init silent file error:', err);
+    }
+  }
+
+  /**
+   * Focus Keeper: Android treats the process as FOREGROUND_MEDIA with AUDIO_ACTIVE.
+   * This prevents Android OS AudioFlinger from suspending the WebView audio on screen-off.
+   */
+  private setupFocusKeeper() {
+    if (!this.silentUri) return;
+    try {
+      if (!this.focusKeeperPlayer) {
+        this.focusKeeperPlayer = createVideoPlayer({
+          uri: this.silentUri,
+          metadata: {
+            title: this.activeMeta.title || 'Playing Audio',
+            artist: this.activeMeta.author || 'YouTube',
+            artwork: this.activeMeta.thumbnail,
+          },
+        });
+        this.focusKeeperPlayer.loop = true;
+        this.focusKeeperPlayer.staysActiveInBackground = true;
+        this.focusKeeperPlayer.showNowPlayingNotification = true;
+        this.focusKeeperPlayer.audioMixingMode = 'mixWithOthers';
+        this.focusKeeperPlayer.volume = 0.001; // virtually silent, holds Android audio focus
+      }
+    } catch (err) {
+      console.warn('[BackgroundAudioBridge] Setup focus keeper error:', err);
+    }
   }
 
   public setResumeCallback(cb: (timeSec: number) => void) {
@@ -59,7 +110,20 @@ class NativeBackgroundAudioBridge {
       };
     }
 
-    // Video changed: pre-warm audio stream immediately in background
+    // Sync native Audio Focus Keeper with video play/pause
+    if (this.focusKeeperPlayer) {
+      if (isPlaying) {
+        try {
+          this.focusKeeperPlayer.play();
+        } catch {}
+      } else {
+        try {
+          this.focusKeeperPlayer.pause();
+        } catch {}
+      }
+    }
+
+    // Video changed: pre-warm fallback audio stream in background
     if (this.activeVideoId !== videoId) {
       this.activeVideoId = videoId;
       this.audioStreamUrl = null;
@@ -68,7 +132,7 @@ class NativeBackgroundAudioBridge {
   }
 
   /**
-   * Asynchronously extracts direct audio stream URL for native ExoPlayer
+   * Asynchronously extracts direct audio stream URL for native ExoPlayer fallback
    */
   private async prewarmAudioStream(videoId: string): Promise<void> {
     if (this.isPrewarming) return;
@@ -89,9 +153,6 @@ class NativeBackgroundAudioBridge {
     }
   }
 
-  /**
-   * Prepares the expo-video native ExoPlayer instance
-   */
   private setupNativePlayer(url: string) {
     try {
       if (this.player) {
@@ -106,7 +167,6 @@ class NativeBackgroundAudioBridge {
             },
           });
         } catch {
-          // Re-create player if replaceAsync is not available
           this.player = null;
         }
       }
@@ -126,7 +186,6 @@ class NativeBackgroundAudioBridge {
         this.player.staysActiveInBackground = true;
         this.player.showNowPlayingNotification = true;
         this.player.audioMixingMode = 'auto';
-        // Keep paused while user is in foreground
         this.player.pause();
       }
     } catch (err) {
@@ -139,7 +198,14 @@ class NativeBackgroundAudioBridge {
    */
   private onAppStateChange(nextState: AppStateStatus) {
     if (nextState === 'background' || nextState === 'inactive') {
-      // SCREEN TURNED OFF OR PHONE LOCKED
+      // Keep focus keeper actively holding AudioFocus
+      if (this.isWebViewPlaying && this.focusKeeperPlayer) {
+        try {
+          this.focusKeeperPlayer.play();
+        } catch {}
+      }
+
+      // If native player with extracted stream is ready, play it as fallback
       if (this.isWebViewPlaying && this.audioStreamUrl && this.player) {
         try {
           const seekPos = Math.max(0, this.lastReportedTime);
@@ -147,18 +213,17 @@ class NativeBackgroundAudioBridge {
           this.player.play();
           this.wasPlayingInBackground = true;
         } catch (err) {
-          console.warn('[BackgroundAudioBridge] Failed to start background playback:', err);
+          console.warn('[BackgroundAudioBridge] Failed to start native audio playback:', err);
         }
       }
     } else if (nextState === 'active') {
-      // SCREEN TURNED BACK ON / APP IN FOREGROUND
+      // Screen Turned Back ON
       if (this.wasPlayingInBackground && this.player) {
         try {
           const currentAudioTime = this.player.currentTime;
           this.player.pause();
           this.wasPlayingInBackground = false;
 
-          // Seamlessly resume WebView video from exact second audio reached
           if (this.injectResumeCallback && currentAudioTime > 0) {
             this.injectResumeCallback(currentAudioTime);
           }
@@ -172,6 +237,10 @@ class NativeBackgroundAudioBridge {
   public destroy() {
     try {
       this.appStateSubscription?.remove?.();
+      if (this.focusKeeperPlayer) {
+        this.focusKeeperPlayer.pause();
+        this.focusKeeperPlayer = null;
+      }
       if (this.player) {
         this.player.pause();
         this.player = null;

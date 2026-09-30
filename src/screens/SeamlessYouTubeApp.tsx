@@ -135,6 +135,19 @@ const BRAVE_CLEAN_ENGINE = `
           background-color: #0F0F0F !important;
           -webkit-tap-highlight-color: transparent !important;
         }
+
+        /* Ensure Miniplayer stays visible, docked at bottom while browsing */
+        ytm-miniplayer-renderer,
+        .ytm-miniplayer-renderer {
+          display: flex !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+          position: fixed !important;
+          bottom: 0px !important;
+          left: 0px !important;
+          right: 0px !important;
+          z-index: 9999 !important;
+        }
       \`;
       (document.head || document.documentElement).appendChild(style);
     } catch(e) {}
@@ -348,6 +361,26 @@ const BRAVE_CLEAN_ENGINE = `
       }));
     }
   });
+
+  // 7. Auto-Miniplayer when browsing other pages / searching
+  // Keeps video playing at the bottom when navigating to home, search, or channel
+  document.addEventListener('click', function(e) {
+    try {
+      var video = document.querySelector('video');
+      if (video && !video.paused) {
+        var link = e.target && e.target.closest && e.target.closest('a[href]');
+        if (link && link.href) {
+          var destUrl = link.href;
+          if (!destUrl.includes('/watch') && window.location.href.includes('/watch')) {
+            var collapseBtn = document.querySelector('button[aria-label*="Collapse" i], button[aria-label*="collapse" i], .ytm-miniplayer-renderer');
+            if (collapseBtn) {
+              collapseBtn.click();
+            }
+          }
+        }
+      }
+    } catch(e) {}
+  }, true);
 })();
 true;
 `;
@@ -416,6 +449,17 @@ export const SeamlessYouTubeApp: React.FC = () => {
         setIsFullscreen(false);
         return true;
       }
+
+      // Check if user is watching a video and can collapse into Miniplayer instead of killing it
+      webViewRef.current?.injectJavaScript(`
+        (function() {
+          var collapseBtn = document.querySelector('button[aria-label*="Collapse" i], button[aria-label*="collapse" i], .ytm-miniplayer-renderer button');
+          if (collapseBtn) {
+            collapseBtn.click();
+          }
+        })();
+        true;
+      `);
 
       if (canGoBack && webViewRef.current) {
         webViewRef.current.goBack();
