@@ -526,14 +526,27 @@ const BRAVE_CLEAN_ENGINE = `
     } catch(e) {}
   }, { capture: true, passive: true });
 
-  // 9. Hardware-Accelerated 2-Finger Pinch-to-Zoom (MX Player & YouTube Native App Experience)
-  (function initPinchToZoom() {
+  // 9. Hardware-Accelerated Persistent Pinch-to-Zoom Engine (MX Player & YouTube Native App Experience)
+  (function initPersistentZoom() {
     var currentScale = 1.0;
     var baseScale = 1.0;
+    var panX = 0;
+    var panY = 0;
+    var basePanX = 0;
+    var basePanY = 0;
     var initialDistance = 0;
+    var initialCenter = { x: 0, y: 0 };
     var isPinching = false;
     var lastSingleTap = 0;
-    var toastTimer = null;
+    var badgeTimer = null;
+
+    // Dedicated style element with !important - Immune to YouTube script overwrites
+    var zoomStyle = document.getElementById('ytm-persistent-zoom-style');
+    if (!zoomStyle) {
+      zoomStyle = document.createElement('style');
+      zoomStyle.id = 'ytm-persistent-zoom-style';
+      (document.head || document.documentElement).appendChild(zoomStyle);
+    }
 
     function showZoomBadge(text) {
       try {
@@ -541,59 +554,80 @@ const BRAVE_CLEAN_ENGINE = `
         if (!badge) {
           badge = document.createElement('div');
           badge.id = 'ytm-zoom-badge';
-          badge.style.cssText = 'position:fixed;top:32px;left:50%;transform:translateX(-50%);background:rgba(15,15,15,0.92);color:#FFFFFF;padding:6px 16px;border-radius:18px;font-size:13px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;z-index:2147483647;pointer-events:none;transition:opacity 0.25s ease;box-shadow:0 4px 16px rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.15);letter-spacing:0.4px;';
+          badge.style.cssText = 'position:fixed;top:28px;left:50%;transform:translateX(-50%);background:rgba(15,15,15,0.92);color:#FFFFFF;padding:6px 18px;border-radius:20px;font-size:13px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;z-index:2147483647;pointer-events:none;transition:opacity 0.2s ease;box-shadow:0 4px 16px rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.2);letter-spacing:0.4px;';
           document.body.appendChild(badge);
         }
         badge.textContent = text;
         badge.style.opacity = '1';
-        clearTimeout(toastTimer);
-        toastTimer = setTimeout(function() {
+        clearTimeout(badgeTimer);
+        badgeTimer = setTimeout(function() {
           badge.style.opacity = '0';
         }, 1200);
       } catch(e) {}
     }
 
-    function getTouchDist(t1, t2) {
+    function applyZoom(scale, tx, ty, animate) {
+      currentScale = Math.min(Math.max(scale, 1.0), 3.5);
+      panX = currentScale <= 1.02 ? 0 : tx;
+      panY = currentScale <= 1.02 ? 0 : ty;
+
+      if (currentScale <= 1.02) {
+        currentScale = 1.0;
+        panX = 0;
+        panY = 0;
+        zoomStyle.textContent = '';
+      } else {
+        var transitionStr = animate ? 'transition: transform 0.25s cubic-bezier(0.25, 1, 0.5, 1) !important;' : 'transition: none !important;';
+        zoomStyle.textContent = \`
+          video.video-stream, video.html5-main-video {
+            transform: scale(\${currentScale.toFixed(3)}) translate(\${panX.toFixed(1)}px, \${panY.toFixed(1)}px) !important;
+            transform-origin: center center !important;
+            \${transitionStr}
+          }
+          .html5-video-player {
+            overflow: hidden !important;
+          }
+        \`;
+      }
+    }
+
+    function getDist(t1, t2) {
       var dx = t1.clientX - t2.clientX;
       var dy = t1.clientY - t2.clientY;
       return Math.sqrt(dx * dx + dy * dy);
     }
 
-    function applyScale(scale, animate) {
-      var video = document.querySelector('video');
-      if (!video) return;
-      currentScale = Math.min(Math.max(scale, 1.0), 3.5);
-      video.style.transformOrigin = 'center center';
-      video.style.transition = animate ? 'transform 0.25s cubic-bezier(0.25, 1, 0.5, 1)' : 'none';
-      if (currentScale <= 1.03) {
-        video.style.transform = '';
-        currentScale = 1.0;
-      } else {
-        video.style.transform = 'scale(' + currentScale.toFixed(3) + ')';
-      }
+    function getCenter(t1, t2) {
+      return {
+        x: (t1.clientX + t2.clientX) / 2,
+        y: (t1.clientY + t2.clientY) / 2
+      };
     }
 
     window.addEventListener('touchstart', function(e) {
       if (e.touches.length === 2) {
-        // 2-Finger Pinch Start
+        // Two fingers: Start Pinch & Pan
         isPinching = true;
-        initialDistance = getTouchDist(e.touches[0], e.touches[1]);
+        initialDistance = getDist(e.touches[0], e.touches[1]);
+        initialCenter = getCenter(e.touches[0], e.touches[1]);
         baseScale = currentScale;
-        e.preventDefault(); // Prevent standard page zooming
-      } else if (e.touches.length === 1) {
-        // Double-tap detector on player area (outside buttons)
+        basePanX = panX;
+        basePanY = panY;
+        e.preventDefault(); // Stop native WebView page zooming
+      } else if (e.touches.length === 1 && !isPinching) {
+        // One finger: Check for double-tap outside buttons
         var target = e.target;
-        var isPlayer = target && (target.closest('#player-control-overlay') || target.closest('.html5-video-player') || target.tagName === 'VIDEO');
-        var isInteractiveBtn = target && target.closest('button, a, [role="button"], input, select');
+        var isPlayerArea = target && (target.closest('#player-control-overlay') || target.closest('.html5-video-player') || target.tagName === 'VIDEO');
+        var isButton = target && target.closest('button, a, [role="button"], input, select');
 
         var now = Date.now();
-        if (isPlayer && !isInteractiveBtn && (now - lastSingleTap < 300)) {
-          // Double-tap toggle: Original vs Zoom to Fill (1.35x)
+        if (isPlayerArea && !isButton && (now - lastSingleTap < 300)) {
+          // Double-tap: Toggle between Original and Zoom to fill
           if (currentScale > 1.05) {
-            applyScale(1.0, true);
-            showZoomBadge('Original (100%)');
+            applyZoom(1.0, 0, 0, true);
+            showZoomBadge('Original');
           } else {
-            applyScale(1.35, true);
+            applyZoom(1.35, 0, 0, true);
             showZoomBadge('Zoom to fill');
           }
           lastSingleTap = 0;
@@ -606,10 +640,14 @@ const BRAVE_CLEAN_ENGINE = `
     window.addEventListener('touchmove', function(e) {
       if (!isPinching || e.touches.length !== 2) return;
       e.preventDefault();
-      var dist = getTouchDist(e.touches[0], e.touches[1]);
+      var dist = getDist(e.touches[0], e.touches[1]);
+      var center = getCenter(e.touches[0], e.touches[1]);
       if (initialDistance > 0) {
-        var ratio = dist / initialDistance;
-        applyScale(baseScale * ratio, false);
+        var scaleRatio = dist / initialDistance;
+        var targetScale = baseScale * scaleRatio;
+        var dx = (center.x - initialCenter.x) / targetScale;
+        var dy = (center.y - initialCenter.y) / targetScale;
+        applyZoom(targetScale, basePanX + dx, basePanY + dy, false);
       }
     }, { passive: false, capture: true });
 
@@ -617,12 +655,23 @@ const BRAVE_CLEAN_ENGINE = `
       if (isPinching && e.touches.length < 2) {
         isPinching = false;
         if (currentScale < 1.08) {
-          applyScale(1.0, true);
+          applyZoom(1.0, 0, 0, true);
           showZoomBadge('Original');
         } else {
-          applyScale(currentScale, true);
-          showZoomBadge(Math.round(currentScale * 100) + '%');
+          applyZoom(currentScale, panX, panY, true);
+          if (Math.abs(currentScale - 1.35) < 0.08) {
+            showZoomBadge('Zoom to fill');
+          } else {
+            showZoomBadge(Math.round(currentScale * 100) + '%');
+          }
         }
+      }
+    }, { passive: true, capture: true });
+
+    window.addEventListener('touchcancel', function(e) {
+      if (isPinching) {
+        isPinching = false;
+        applyZoom(currentScale, panX, panY, true);
       }
     }, { passive: true, capture: true });
   })();
