@@ -145,24 +145,14 @@ const BRAVE_CLEAN_ENGINE = `
           -webkit-tap-highlight-color: transparent !important;
         }
 
-        /* Video Titles in Feed & Search - High Contrast White Text */
-        .media-item-headline,
-        h3.media-item-headline,
+        /* Video Titles in Feed & Search Only - High Contrast White Text */
+        ytm-media-item .media-item-headline,
+        ytm-compact-video-renderer .compact-media-item-headline,
         .compact-media-item-headline,
-        .ytm-media-item .details,
-        .video-title,
-        .slim-video-metadata-title,
-        h1, h2, h3, h4,
-        .ytm-compact-video-renderer-headline,
-        .compact-media-item-headline *,
-        .media-item-headline *,
-        .details .headline,
-        [class*="headline"],
-        [class*="video-title"] {
+        .media-item-headline,
+        .ytm-media-item .details .headline {
           color: #FFFFFF !important;
           -webkit-text-fill-color: #FFFFFF !important;
-          opacity: 1 !important;
-          visibility: visible !important;
         }
 
         /* Channel Names, Views Count & Upload Date */
@@ -176,16 +166,12 @@ const BRAVE_CLEAN_ENGINE = `
         .ytm-badge-and-byline-item {
           color: #AAAAAA !important;
           -webkit-text-fill-color: #AAAAAA !important;
-          opacity: 1 !important;
-          visibility: visible !important;
         }
 
         /* Ensure Miniplayer stays visible, docked at bottom while browsing */
         ytm-miniplayer-renderer,
         .ytm-miniplayer-renderer {
           display: flex !important;
-          visibility: visible !important;
-          opacity: 1 !important;
           position: fixed !important;
           bottom: 0px !important;
           left: 0px !important;
@@ -193,37 +179,32 @@ const BRAVE_CLEAN_ENGINE = `
           z-index: 9999 !important;
         }
 
-        /* Settings & Quality Menu Popup - Force High Z-Index & Touchability */
-        ytm-menu-popup-renderer,
-        ytm-bottom-sheet-renderer,
-        .ytp-settings-menu,
-        .ytp-popup,
-        .ytp-panel,
-        .ytp-quality-menu,
-        [role="menu"],
-        [role="dialog"] {
-          z-index: 2147483647 !important;
-          pointer-events: auto !important;
-          visibility: visible !important;
-          opacity: 1 !important;
+        /* Video Player Clean Overlay - Titles and Controls Fade Out Automatically */
+        .player-control-overlay,
+        .ytp-chrome-top,
+        .ytp-title-text,
+        .ytm-custom-control {
+          transition: opacity 0.25s ease-out !important;
         }
 
-        /* Ensure settings gear button is large and easy to touch */
+        /* Settings Gear Icon in Landscape & Fullscreen - Big Touch Target */
         .ytp-settings-button,
         button[aria-label*="Settings" i],
         button[aria-label*="Playback settings" i] {
           pointer-events: auto !important;
           min-width: 44px !important;
           min-height: 44px !important;
-          z-index: 1000 !important;
-          opacity: 1 !important;
+          cursor: pointer !important;
         }
 
-        /* Video Container for Pinch-To-Zoom */
-        .html5-video-player,
-        .player-container,
-        #player-container {
-          overflow: hidden !important;
+        /* Quality & Settings Popup Menu - High Z-Index when opened */
+        .ytp-settings-menu,
+        .ytp-popup,
+        .ytp-panel,
+        .ytp-quality-menu,
+        ytm-menu-popup-renderer,
+        ytm-bottom-sheet-renderer {
+          z-index: 2147483647 !important;
         }
 
         /* Zoom HUD Indicator Pill */
@@ -522,29 +503,30 @@ const BRAVE_CLEAN_ENGINE = `
       return document.querySelector('video');
     }
 
+    // ONLY intercept when touching the video player area
+    function isVideoArea(el) {
+      return Boolean(el && el.closest && el.closest('.html5-video-player, video, .player-container, #player-container'));
+    }
+
+    // NEVER intercept buttons, controls, or settings menus!
+    function isControl(el) {
+      return Boolean(el && el.closest && el.closest('button, .ytp-button, [role="button"], ytm-menu-popup-renderer, .ytp-settings-menu, .ytp-popup, [role="menu"], [role="dialog"], a'));
+    }
+
     document.addEventListener('touchstart', function(e) {
+      if (isControl(e.target)) return; // Let buttons, settings, play/pause work 100% natively!
+      if (!isVideoArea(e.target)) return;
+
       var video = getVideo();
       if (!video) return;
 
-      // Two-finger pinch start
+      // ONLY track when exactly 2 fingers touch the video!
       if (e.touches.length === 2) {
         var dx = e.touches[0].clientX - e.touches[1].clientX;
         var dy = e.touches[0].clientY - e.touches[1].clientY;
         startDistance = Math.hypot(dx, dy);
         initialScale = currentScale;
         video.style.transition = 'none';
-      } else if (e.touches.length === 1) {
-        // Double-tap on video to reset zoom
-        var now = Date.now();
-        if (now - lastTapTime < 300 && currentScale > 1.05) {
-          currentScale = 1.0;
-          video.style.transition = 'transform 0.25s ease';
-          video.style.transform = 'scale(1)';
-          showZoomHud(1.0);
-          lastTapTime = 0;
-          return;
-        }
-        lastTapTime = now;
       }
     }, { passive: true });
 
