@@ -2,6 +2,8 @@ import React, { useRef, useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   View,
+  TouchableOpacity,
+  Text,
   BackHandler,
   Platform,
   StatusBar,
@@ -188,46 +190,76 @@ const BRAVE_CLEAN_ENGINE = `
           max-height: 100vh !important;
         }
 
-        #__yt_fit_screen_btn__ {
-          position: absolute;
-          width: 40px;
-          height: 40px;
-          border-radius: 50%;
-          background: rgba(15, 15, 15, 0.72);
-          backdrop-filter: blur(8px);
-          -webkit-backdrop-filter: blur(8px);
-          border: 1px solid rgba(255, 255, 255, 0.25);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          z-index: 999999 !important;
-          transition: transform 0.15s ease, opacity 0.2s ease;
-          padding: 0;
-          margin: 0;
+        /* Inline Fit Screen Button in YouTube's Control Bars (Top & Bottom) */
+        .yt-fit-screen-inline-btn {
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          width: 40px !important;
+          height: 40px !important;
+          background: transparent !important;
+          border: none !important;
+          outline: none !important;
+          cursor: pointer !important;
+          padding: 0 !important;
+          margin: 0 4px !important;
+          vertical-align: middle !important;
           pointer-events: auto !important;
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+          z-index: 999999 !important;
+          transition: transform 0.15s ease, opacity 0.2s ease !important;
+        }
+
+        .yt-fit-screen-inline-btn:active {
+          transform: scale(0.85) !important;
+        }
+
+        .yt-fit-screen-inline-btn svg {
+          display: block !important;
+          width: 22px !important;
+          height: 22px !important;
+        }
+
+        /* Floating Corner Button */
+        #__yt_fit_screen_btn__ {
+          position: fixed !important;
+          width: 42px !important;
+          height: 42px !important;
+          border-radius: 50% !important;
+          background: rgba(15, 15, 15, 0.75) !important;
+          backdrop-filter: blur(8px) !important;
+          -webkit-backdrop-filter: blur(8px) !important;
+          border: 1.5px solid rgba(255, 255, 255, 0.35) !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          cursor: pointer !important;
+          z-index: 2147483647 !important;
+          transition: transform 0.15s ease, opacity 0.2s ease !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          pointer-events: auto !important;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6) !important;
         }
 
         @media (orientation: landscape) {
           #__yt_fit_screen_btn__ {
-            top: 16px;
-            left: 16px;
-            right: auto;
+            top: 16px !important;
+            left: 16px !important;
+            right: auto !important;
           }
         }
 
         @media (orientation: portrait) {
           #__yt_fit_screen_btn__ {
-            top: 12px;
-            right: 56px;
-            left: auto;
+            top: 12px !important;
+            right: 56px !important;
+            left: auto !important;
           }
         }
 
         #__yt_fit_screen_btn__:active {
-          transform: scale(0.9);
-          background: rgba(255, 255, 255, 0.25);
+          transform: scale(0.9) !important;
+          background: rgba(255, 255, 255, 0.25) !important;
         }
 
         #__yt_fit_toast__ {
@@ -677,58 +709,84 @@ const BRAVE_CLEAN_ENGINE = `
     // 2. Apply Fit Screen styles
     applyFitScreenState(isFitCover);
 
-    // 3. Update icon
-    var btn = document.getElementById('__yt_fit_screen_btn__');
-    if (btn) {
-      btn.innerHTML = isFitCover ? FIT_ICON_COLLAPSE : FIT_ICON_EXPAND;
+    // 3. Update all buttons' icon
+    var btns = document.querySelectorAll('.yt-fit-screen-toggle-btn');
+    for (var b = 0; b < btns.length; b++) {
+      btns[b].innerHTML = isFitCover ? FIT_ICON_COLLAPSE : FIT_ICON_EXPAND;
     }
 
     // 4. Show HUD toast
     showFitToast(isFitCover ? 'Fit to Screen (Zoom to Fill)' : 'Original (16:9 Fit)');
   }
 
-  function handleFitScreenClick() {
+  window.toggleFitScreen = toggleFitScreen;
+
+  function handleFitScreenClick(e) {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
     var now = Date.now();
     if (now - lastToggleTime < 350) return;
     lastToggleTime = now;
     toggleFitScreen();
   }
 
+  function createFitButton(id, extraClass) {
+    var btn = document.createElement('button');
+    btn.id = id;
+    btn.className = 'yt-fit-screen-toggle-btn ' + (extraClass || '');
+    btn.setAttribute('aria-label', 'Fit Screen');
+    btn.setAttribute('title', 'Fit to Screen / Zoom to Fill');
+    btn.innerHTML = isFitCover ? FIT_ICON_COLLAPSE : FIT_ICON_EXPAND;
+
+    btn.addEventListener('click', handleFitScreenClick, true);
+    btn.addEventListener('touchend', handleFitScreenClick, true);
+    return btn;
+  }
+
   function ensureFitScreenButton() {
     try {
       if (!window.location.href.includes('/watch') && !document.querySelector('video')) {
-        var existing = document.getElementById('__yt_fit_screen_btn__');
-        if (existing) existing.style.display = 'none';
         return;
       }
 
-      var playerContainer = document.querySelector('.html5-video-player') || document.querySelector('#player-control-overlay') || document.querySelector('.player-container');
-      if (!playerContainer) return;
+      // Anchor 1: Inside YouTube's top controls bar (next to Settings [ ⚙ ] or [CC])
+      var settingsBtn = document.querySelector('button[aria-label*="Settings" i], .ytp-settings-button, button.icon-button[aria-label*="Settings" i]');
+      if (settingsBtn && settingsBtn.parentElement) {
+        var existingTopBtn = document.getElementById('__yt_fit_screen_top_btn__');
+        if (!existingTopBtn) {
+          var topBtn = createFitButton('__yt_fit_screen_top_btn__', 'yt-fit-screen-inline-btn');
+          settingsBtn.parentElement.insertBefore(topBtn, settingsBtn);
+        } else if (existingTopBtn.parentElement !== settingsBtn.parentElement) {
+          settingsBtn.parentElement.insertBefore(existingTopBtn, settingsBtn);
+        }
+      }
 
-      var btn = document.getElementById('__yt_fit_screen_btn__');
-      if (!btn) {
-        btn = document.createElement('button');
-        btn.id = '__yt_fit_screen_btn__';
-        btn.setAttribute('aria-label', 'Fit Screen');
-        btn.innerHTML = isFitCover ? FIT_ICON_COLLAPSE : FIT_ICON_EXPAND;
+      // Anchor 2: Inside YouTube's bottom controls bar (next to exit-fullscreen button [ ↘↖ ])
+      var fsBtn = document.querySelector('button.fullscreen-icon, button[aria-label*="Exit full screen" i], button[aria-label*="Full screen" i]');
+      if (fsBtn && fsBtn.parentElement) {
+        var existingBottomBtn = document.getElementById('__yt_fit_screen_bottom_btn__');
+        if (!existingBottomBtn) {
+          var bottomBtn = createFitButton('__yt_fit_screen_bottom_btn__', 'yt-fit-screen-inline-btn');
+          fsBtn.parentElement.insertBefore(bottomBtn, fsBtn);
+        } else if (existingBottomBtn.parentElement !== fsBtn.parentElement) {
+          fsBtn.parentElement.insertBefore(existingBottomBtn, fsBtn);
+        }
+      }
 
-        btn.addEventListener('click', function(e) {
-          e.stopPropagation();
-          e.preventDefault();
-          handleFitScreenClick();
-        }, true);
-
-        btn.addEventListener('touchend', function(e) {
-          e.stopPropagation();
-          e.preventDefault();
-          handleFitScreenClick();
-        }, true);
-
-        playerContainer.appendChild(btn);
-      } else {
-        btn.style.display = 'flex';
-        if (btn.parentElement !== playerContainer) {
-          playerContainer.appendChild(btn);
+      // Anchor 3: Floating button in player-control-overlay or active fullscreen container
+      var overlayContainer = document.querySelector('.player-control-overlay, ytm-player-control-overlay') ||
+                             document.fullscreenElement ||
+                             document.webkitFullscreenElement ||
+                             document.querySelector('.html5-video-player');
+      if (overlayContainer) {
+        var existingFloatingBtn = document.getElementById('__yt_fit_screen_btn__');
+        if (!existingFloatingBtn) {
+          var floatBtn = createFitButton('__yt_fit_screen_btn__', 'yt-fit-screen-floating-btn');
+          overlayContainer.appendChild(floatBtn);
+        } else if (existingFloatingBtn.parentElement !== overlayContainer) {
+          overlayContainer.appendChild(existingFloatingBtn);
         }
       }
     } catch(e) {}
@@ -955,6 +1013,25 @@ export const SeamlessYouTubeApp: React.FC = () => {
         overScrollMode="never"
         style={styles.webView}
       />
+
+      {isLandscape && (
+        <View style={styles.floatingFitOverlay} pointerEvents="box-none">
+          <TouchableOpacity
+            style={styles.floatingFitBtn}
+            onPress={() => {
+              webViewRef.current?.injectJavaScript(`
+                if (window.toggleFitScreen) {
+                  window.toggleFitScreen();
+                }
+                true;
+              `);
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.floatingFitText}>⤢ Fit Screen</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 };
@@ -967,5 +1044,27 @@ const styles = StyleSheet.create({
   webView: {
     flex: 1,
     backgroundColor: 'transparent',
+  },
+  floatingFitOverlay: {
+    position: 'absolute',
+    top: 14,
+    left: 16,
+    zIndex: 999999,
+  },
+  floatingFitBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 15, 15, 0.75)',
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+    borderWidth: 1.2,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    elevation: 8,
+  },
+  floatingFitText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });
