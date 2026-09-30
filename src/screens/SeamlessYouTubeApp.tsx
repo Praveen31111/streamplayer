@@ -192,6 +192,58 @@ const BRAVE_CLEAN_ENGINE = `
           right: 0px !important;
           z-index: 9999 !important;
         }
+
+        /* Settings & Quality Menu Popup - Force High Z-Index & Touchability */
+        ytm-menu-popup-renderer,
+        ytm-bottom-sheet-renderer,
+        .ytp-settings-menu,
+        .ytp-popup,
+        .ytp-panel,
+        .ytp-quality-menu,
+        [role="menu"],
+        [role="dialog"] {
+          z-index: 2147483647 !important;
+          pointer-events: auto !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+        }
+
+        /* Ensure settings gear button is large and easy to touch */
+        .ytp-settings-button,
+        button[aria-label*="Settings" i],
+        button[aria-label*="Playback settings" i] {
+          pointer-events: auto !important;
+          min-width: 44px !important;
+          min-height: 44px !important;
+          z-index: 1000 !important;
+          opacity: 1 !important;
+        }
+
+        /* Video Container for Pinch-To-Zoom */
+        .html5-video-player,
+        .player-container,
+        #player-container {
+          overflow: hidden !important;
+        }
+
+        /* Zoom HUD Indicator Pill */
+        #__zoom_hud__ {
+          position: fixed;
+          top: 16px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: rgba(0, 0, 0, 0.85);
+          color: #FFFFFF;
+          padding: 6px 14px;
+          border-radius: 20px;
+          font-family: sans-serif;
+          font-size: 13px;
+          font-weight: 600;
+          z-index: 2147483647;
+          pointer-events: none;
+          transition: opacity 0.3s ease;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+        }
       \`;
       (document.head || document.documentElement).appendChild(style);
 
@@ -431,6 +483,106 @@ const BRAVE_CLEAN_ENGINE = `
       }
     } catch(e) {}
   }, true);
+
+  // 8. MX Player / YouTube Style Two-Finger Pinch-To-Zoom Controller
+  (function initPinchToZoom() {
+    var currentScale = 1.0;
+    var startDistance = 0;
+    var initialScale = 1.0;
+    var hudTimeout = null;
+    var lastTapTime = 0;
+
+    function getHud() {
+      var hud = document.getElementById('__zoom_hud__');
+      if (!hud) {
+        hud = document.createElement('div');
+        hud.id = '__zoom_hud__';
+        hud.style.display = 'none';
+        document.body.appendChild(hud);
+      }
+      return hud;
+    }
+
+    function showZoomHud(scale) {
+      try {
+        var hud = getHud();
+        clearTimeout(hudTimeout);
+        var pct = Math.round(scale * 100);
+        hud.textContent = scale === 1 ? 'Original (100%)' : pct + '% Zoom';
+        hud.style.display = 'block';
+        hud.style.opacity = '1';
+        hudTimeout = setTimeout(function() {
+          hud.style.opacity = '0';
+          setTimeout(function() { hud.style.display = 'none'; }, 300);
+        }, 1200);
+      } catch(e) {}
+    }
+
+    function getVideo() {
+      return document.querySelector('video');
+    }
+
+    document.addEventListener('touchstart', function(e) {
+      var video = getVideo();
+      if (!video) return;
+
+      // Two-finger pinch start
+      if (e.touches.length === 2) {
+        var dx = e.touches[0].clientX - e.touches[1].clientX;
+        var dy = e.touches[0].clientY - e.touches[1].clientY;
+        startDistance = Math.hypot(dx, dy);
+        initialScale = currentScale;
+        video.style.transition = 'none';
+      } else if (e.touches.length === 1) {
+        // Double-tap on video to reset zoom
+        var now = Date.now();
+        if (now - lastTapTime < 300 && currentScale > 1.05) {
+          currentScale = 1.0;
+          video.style.transition = 'transform 0.25s ease';
+          video.style.transform = 'scale(1)';
+          showZoomHud(1.0);
+          lastTapTime = 0;
+          return;
+        }
+        lastTapTime = now;
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchmove', function(e) {
+      if (e.touches.length === 2 && startDistance > 0) {
+        var video = getVideo();
+        if (!video) return;
+
+        var dx = e.touches[0].clientX - e.touches[1].clientX;
+        var dy = e.touches[0].clientY - e.touches[1].clientY;
+        var currentDistance = Math.hypot(dx, dy);
+        var factor = currentDistance / startDistance;
+        var newScale = Math.min(Math.max(1.0, initialScale * factor), 3.5);
+
+        currentScale = newScale;
+        video.style.transformOrigin = 'center center';
+        video.style.transform = 'scale(' + currentScale + ')';
+        showZoomHud(currentScale);
+
+        if (e.cancelable) {
+          e.preventDefault();
+        }
+      }
+    }, { passive: false });
+
+    document.addEventListener('touchend', function(e) {
+      if (e.touches.length < 2 && startDistance > 0) {
+        startDistance = 0;
+        var video = getVideo();
+        if (video && currentScale < 1.08) {
+          currentScale = 1.0;
+          video.style.transition = 'transform 0.25s ease';
+          video.style.transform = 'scale(1)';
+          showZoomHud(1.0);
+        }
+      }
+    }, { passive: true });
+  })();
 })();
 true;
 `;
