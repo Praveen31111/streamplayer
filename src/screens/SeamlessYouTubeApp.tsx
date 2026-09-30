@@ -176,58 +176,6 @@ const BRAVE_CLEAN_ENGINE = `
         ytm-bottom-sheet-renderer {
           pointer-events: auto !important;
         }
-
-        /* Clean Edge-to-Edge Player in Landscape - Zero top header or bottom playlist clutter */
-        @media (orientation: landscape) {
-          ytm-mobile-topbar-renderer,
-          .mobile-topbar-header,
-          ytm-playlist-panel-renderer,
-          ytm-engagement-panel-section-list-renderer,
-          .playlist-panel,
-          ytm-pivot-bar-renderer {
-            display: none !important;
-            height: 0 !important;
-            opacity: 0 !important;
-            visibility: hidden !important;
-          }
-
-          ytm-watch,
-          ytm-watch .player-container,
-          #player-container-id,
-          .player-container {
-            width: 100vw !important;
-            height: 100vh !important;
-            max-width: 100vw !important;
-            max-height: 100vh !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            background: transparent !important;
-          }
-
-          .html5-video-player {
-            width: 100% !important;
-            height: 100% !important;
-            position: relative !important;
-          }
-
-          video.video-stream,
-          video.html5-main-video {
-            width: 100% !important;
-            height: 100% !important;
-            object-fit: contain !important;
-          }
-
-          .player-control-overlay,
-          .player-controls-background {
-            position: absolute !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 100% !important;
-            height: 100% !important;
-            pointer-events: auto !important;
-            z-index: 20 !important;
-          }
-        }
       \`;
       (document.head || document.documentElement).appendChild(style);
 
@@ -497,7 +445,9 @@ const BRAVE_CLEAN_ENGINE = `
   }, true);
 
   // 8. YouTube Native Fullscreen Controller
-  window.__setYouTubeFullscreen = function(enter) {
+  window.__pendingFullscreen = false;
+
+  function tryTriggerFullscreen(enter) {
     try {
       var isFull = Boolean(
         document.fullscreenElement ||
@@ -506,19 +456,30 @@ const BRAVE_CLEAN_ENGINE = `
         document.msFullscreenElement
       );
       if (enter && !isFull) {
-        var fsBtn = document.querySelector('.ytp-fullscreen-button, button[aria-label*="Full screen" i], button[aria-label*="fullscreen" i], .fullscreen-icon');
+        var fsBtn = document.querySelector('button.fullscreen-icon, .fullscreen-icon, .ytp-fullscreen-button, button[aria-label*="Full screen" i], button[aria-label*="fullscreen" i], [aria-label*="पूरा स्क्रीन" i]');
         if (fsBtn) {
           fsBtn.click();
         } else {
-          var video = document.querySelector('video');
-          if (video && video.requestFullscreen) {
-            video.requestFullscreen().catch(function(){});
-          } else if (video && video.webkitRequestFullscreen) {
-            video.webkitRequestFullscreen().catch(function(){});
+          var overlay = document.querySelector('.player-control-overlay, #player-control-overlay, .html5-video-player');
+          if (overlay) {
+            overlay.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+          }
+          var fsBtn2 = document.querySelector('button.fullscreen-icon, .fullscreen-icon, .ytp-fullscreen-button, button[aria-label*="Full screen" i], button[aria-label*="fullscreen" i], [aria-label*="पूरा स्क्रीन" i]');
+          if (fsBtn2) {
+            fsBtn2.click();
+          } else {
+            var video = document.querySelector('video');
+            if (video) {
+              if (video.requestFullscreen) {
+                video.requestFullscreen().catch(function(){});
+              } else if (video.webkitRequestFullscreen) {
+                video.webkitRequestFullscreen().catch(function(){});
+              }
+            }
           }
         }
       } else if (!enter && isFull) {
-        var exitBtn = document.querySelector('button[aria-label*="Exit full screen" i], button[aria-label*="exit fullscreen" i]');
+        var exitBtn = document.querySelector('button[aria-label*="Exit full screen" i], button[aria-label*="exit fullscreen" i], [aria-label*="फ़ुल-स्क्रीन से बाहर" i]');
         if (exitBtn) {
           exitBtn.click();
         } else if (document.exitFullscreen) {
@@ -528,7 +489,31 @@ const BRAVE_CLEAN_ENGINE = `
         }
       }
     } catch(e) {}
+  }
+
+  window.__setYouTubeFullscreen = function(enter) {
+    if (!window.location.href.includes('/watch') && !document.querySelector('video')) {
+      return;
+    }
+    window.__pendingFullscreen = enter;
+    tryTriggerFullscreen(enter);
   };
+
+  // If browser required a user touch gesture to activate HTML5 fullscreen,
+  // trigger on the first touch gesture while pending
+  window.addEventListener('touchstart', function() {
+    if (window.__pendingFullscreen) {
+      window.__pendingFullscreen = false;
+      tryTriggerFullscreen(true);
+    }
+  }, { capture: true, passive: true });
+
+  window.addEventListener('click', function() {
+    if (window.__pendingFullscreen) {
+      window.__pendingFullscreen = false;
+      tryTriggerFullscreen(true);
+    }
+  }, { capture: true, passive: true });
 })();
 true;
 `;
@@ -598,9 +583,10 @@ export const SeamlessYouTubeApp: React.FC = () => {
             await setVisibilityAsync(isImmersive ? 'hidden' : 'visible');
           } catch {}
         }
-        if (isFullscreen) {
+        if (isFullscreen && !isLandscape) {
+          // If user tapped fullscreen button while holding phone vertically, lock landscape
           await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-        } else {
+        } else if (!isFullscreen) {
           // When not locked in fullscreen, unlock so the device naturally follows phone holding position
           await ScreenOrientation.unlockAsync();
         }
