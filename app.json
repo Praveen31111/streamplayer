@@ -39,7 +39,15 @@
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
         "android.permission.WAKE_LOCK"
-      ]
+      ],
+      "navigationBar": {
+        "visible": "immersive",
+        "backgroundColor": "#00000000"
+      },
+      "statusBar": {
+        "translucent": true,
+        "backgroundColor": "#00000000"
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"

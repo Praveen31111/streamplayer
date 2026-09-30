@@ -179,7 +179,15 @@ const BRAVE_CLEAN_ENGINE = `
           pointer-events: auto !important;
         }
 
-        /* Fit Screen (Zoom to Fill) Engine */
+        /* Fit Screen (Zoom to Fill) Engine - True Edge-to-Edge Past Front Camera Notch */
+        html.fit-screen-active,
+        body.fit-screen-active {
+          padding-left: 0 !important;
+          padding-right: 0 !important;
+          margin-left: 0 !important;
+          margin-right: 0 !important;
+        }
+
         html.fit-screen-active video,
         body.fit-screen-active video,
         video.fit-screen-cover {
@@ -188,6 +196,15 @@ const BRAVE_CLEAN_ENGINE = `
           height: 100vh !important;
           max-width: 100vw !important;
           max-height: 100vh !important;
+          position: fixed !important;
+          top: 0 !important;
+          left: 0 !important;
+          right: 0 !important;
+          bottom: 0 !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          transform: none !important;
+          z-index: 1 !important;
         }
 
         /* Inline Fit Screen Button in YouTube's Control Bars (Top & Bottom) */
@@ -298,10 +315,28 @@ const BRAVE_CLEAN_ENGINE = `
     } catch(e) {}
   }
 
+  function ensureViewportFitCover() {
+    try {
+      var meta = document.querySelector('meta[name="viewport"]');
+      if (meta) {
+        var content = meta.getAttribute('content') || '';
+        if (!content.includes('viewport-fit=cover')) {
+          meta.setAttribute('content', content + ', viewport-fit=cover');
+        }
+      } else {
+        var newMeta = document.createElement('meta');
+        newMeta.name = 'viewport';
+        newMeta.content = 'width=device-width, initial-scale=1.0, viewport-fit=cover';
+        document.head.appendChild(newMeta);
+      }
+    } catch(e) {}
+  }
+
   // 3. Fallback Fast-Skip Watchdog
   function handleVideoAds() {
     try {
       injectStyles();
+      ensureViewportFitCover();
       ensureFitScreenButton();
 
       // Click all modern & legacy skip buttons
@@ -984,7 +1019,7 @@ export const SeamlessYouTubeApp: React.FC = () => {
         barStyle="light-content"
         backgroundColor="#0F0F0F"
         hidden={isImmersive}
-        translucent={isImmersive}
+        translucent={true}
       />
 
       <WebView
