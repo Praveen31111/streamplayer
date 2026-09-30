@@ -10,7 +10,7 @@ import {
 import { WebView, WebViewNavigation } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ScreenOrientation from 'expo-screen-orientation';
-import { NavigationBar, setVisibilityAsync } from 'expo-navigation-bar';
+import { setVisibilityAsync } from 'expo-navigation-bar';
 import { backgroundAudioBridge } from '../player/NativeBackgroundAudioBridge';
 
 // Universal Android Chrome Mobile User-Agent without 'wv' (WebView flag)
@@ -182,85 +182,6 @@ const BRAVE_CLEAN_ENGINE = `
           position: relative !important;
         }
 
-        /* Pure YouTube Experience in Landscape - Zero clutter, full screen video */
-        @media (orientation: landscape) {
-          /* 1. Hide YouTube top header in landscape */
-          ytm-mobile-topbar-renderer,
-          .mobile-topbar-header {
-            display: none !important;
-            height: 0 !important;
-            opacity: 0 !important;
-            visibility: hidden !important;
-          }
-
-          /* 2. Hide playlist/mix panel & bottom bars in landscape */
-          ytm-playlist-panel-renderer,
-          ytm-engagement-panel-section-list-renderer,
-          .playlist-panel,
-          ytm-pivot-bar-renderer {
-            display: none !important;
-            height: 0 !important;
-            opacity: 0 !important;
-            visibility: hidden !important;
-          }
-
-          /* 3. Hide floating circular gear button in landscape */
-          .ytm-custom-control.ytm-settings-button,
-          button[aria-label*="Playback settings" i] {
-            display: none !important;
-          }
-
-          /* 4. On watch page in landscape, video player takes 100vw x 100vh cleanly */
-          ytm-watch .player-container,
-          #player-container-id {
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            right: 0 !important;
-            bottom: 0 !important;
-            width: 100vw !important;
-            height: 100vh !important;
-            max-width: 100vw !important;
-            max-height: 100vh !important;
-            z-index: 1000 !important;
-            background: #000000 !important;
-          }
-
-          .html5-video-player {
-            width: 100% !important;
-            height: 100% !important;
-            position: relative !important;
-          }
-
-          /* Video element fits aspect ratio, pointer-events none ensures touches pass to controls */
-          video.video-stream,
-          video.html5-main-video {
-            width: 100% !important;
-            height: 100% !important;
-            object-fit: contain !important;
-            pointer-events: none !important;
-          }
-
-          /* Controls overlay fills the entire screen so taps, seek, and gestures always work */
-          .player-control-overlay,
-          .player-controls-background {
-            position: absolute !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 100% !important;
-            height: 100% !important;
-            pointer-events: auto !important;
-            z-index: 20 !important;
-          }
-
-          /* Settings & quality menus popup on top */
-          ytm-menu-popup-renderer,
-          ytm-bottom-sheet-renderer,
-          .ytp-popup,
-          .ytp-settings-menu {
-            z-index: 2147483647 !important;
-          }
-        }
       \`;
       (document.head || document.documentElement).appendChild(style);
 
@@ -530,6 +451,7 @@ const BRAVE_CLEAN_ENGINE = `
   }, true);
 
   // 8. YouTube Native Fullscreen Controller
+  var pendingLandscapeFullscreen = false;
   window.__setYouTubeFullscreen = function(enter) {
     try {
       var isFull = Boolean(
@@ -539,7 +461,8 @@ const BRAVE_CLEAN_ENGINE = `
         document.msFullscreenElement
       );
       if (enter && !isFull) {
-        var fsBtn = document.querySelector('.ytp-fullscreen-button, button[aria-label*="Full screen" i], button[aria-label*="fullscreen" i], .fullscreen-icon');
+        pendingLandscapeFullscreen = true;
+        var fsBtn = document.querySelector('button.fullscreen-icon, button[aria-label*="Full screen" i], button[aria-label*="fullscreen" i], .ytp-fullscreen-button');
         if (fsBtn) {
           fsBtn.click();
         } else {
@@ -551,6 +474,7 @@ const BRAVE_CLEAN_ENGINE = `
           }
         }
       } else if (!enter && isFull) {
+        pendingLandscapeFullscreen = false;
         var exitBtn = document.querySelector('button[aria-label*="Exit full screen" i], button[aria-label*="exit fullscreen" i]');
         if (exitBtn) {
           exitBtn.click();
@@ -562,6 +486,26 @@ const BRAVE_CLEAN_ENGINE = `
       }
     } catch(e) {}
   };
+
+  // If user rotates phone sideways, the first touch gesture triggers fullscreen natively with user activation
+  window.addEventListener('touchstart', function() {
+    try {
+      if (pendingLandscapeFullscreen) {
+        pendingLandscapeFullscreen = false;
+        var fsBtn = document.querySelector('button.fullscreen-icon, button[aria-label*="Full screen" i], button[aria-label*="fullscreen" i], .ytp-fullscreen-button');
+        if (fsBtn) {
+          fsBtn.click();
+        } else {
+          var video = document.querySelector('video');
+          if (video && video.requestFullscreen) {
+            video.requestFullscreen().catch(function(){});
+          } else if (video && video.webkitRequestFullscreen) {
+            video.webkitRequestFullscreen().catch(function(){});
+          }
+        }
+      }
+    } catch(e) {}
+  }, { capture: true, passive: true });
 })();
 true;
 `;
@@ -628,9 +572,8 @@ export const SeamlessYouTubeApp: React.FC = () => {
         const isImmersive = isFullscreen || isLandscape;
         if (Platform.OS === 'android') {
           try {
-            NavigationBar.setHidden(isImmersive);
+            await setVisibilityAsync(isImmersive ? 'hidden' : 'visible');
           } catch {}
-          await setVisibilityAsync(isImmersive ? 'hidden' : 'visible');
         }
         if (isFullscreen) {
           await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
