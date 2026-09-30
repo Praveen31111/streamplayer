@@ -10,7 +10,7 @@ import {
 import { WebView, WebViewNavigation } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ScreenOrientation from 'expo-screen-orientation';
-import { setVisibilityAsync } from 'expo-navigation-bar';
+import { NavigationBar, setVisibilityAsync } from 'expo-navigation-bar';
 import { backgroundAudioBridge } from '../player/NativeBackgroundAudioBridge';
 
 // Universal Android Chrome Mobile User-Agent without 'wv' (WebView flag)
@@ -186,6 +186,67 @@ const BRAVE_CLEAN_ENGINE = `
         ytm-menu-popup-renderer,
         ytm-bottom-sheet-renderer {
           pointer-events: auto !important;
+        }
+
+        /* In Landscape, make the video player fill the entire screen edge-to-edge (no black navbar wall) */
+        html.theater-landscape,
+        html.theater-landscape body {
+          overflow: hidden !important;
+          background: #000000 !important;
+          width: 100vw !important;
+          height: 100vh !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+
+        /* Hide mobile header and feed elements in landscape watch */
+        html.theater-landscape ytm-mobile-topbar-renderer,
+        html.theater-landscape ytm-pivot-bar-renderer,
+        html.theater-landscape ytm-watch ytm-item-section-renderer,
+        html.theater-landscape ytm-single-column-watch-next-results-renderer {
+          display: none !important;
+          height: 0 !important;
+          opacity: 0 !important;
+        }
+
+        /* Expand player container to full 100vw x 100vh */
+        html.theater-landscape #player-container-id,
+        html.theater-landscape .player-container,
+        html.theater-landscape #player,
+        html.theater-landscape ytm-watch .player-container,
+        html.theater-landscape .html5-video-player {
+          position: fixed !important;
+          top: 0 !important;
+          left: 0 !important;
+          right: 0 !important;
+          bottom: 0 !important;
+          width: 100vw !important;
+          height: 100vh !important;
+          max-width: 100vw !important;
+          max-height: 100vh !important;
+          z-index: 2147483640 !important;
+          background: #000000 !important;
+        }
+
+        /* Ensure HTML5 Video element fits full screen with aspect ratio */
+        html.theater-landscape video,
+        html.theater-landscape .video-stream,
+        html.theater-landscape .html5-main-video {
+          width: 100vw !important;
+          height: 100vh !important;
+          max-width: 100vw !important;
+          max-height: 100vh !important;
+          object-fit: contain !important;
+          top: 0 !important;
+          left: 0 !important;
+        }
+
+        /* Settings menu & bottom sheet popups must appear above the fullscreen video */
+        html.theater-landscape ytm-menu-popup-renderer,
+        html.theater-landscape ytm-bottom-sheet-renderer,
+        html.theater-landscape .ytp-popup,
+        html.theater-landscape .ytp-settings-menu {
+          z-index: 2147483647 !important;
         }
       \`;
       (document.head || document.documentElement).appendChild(style);
@@ -454,6 +515,26 @@ const BRAVE_CLEAN_ENGINE = `
       }
     } catch(e) {}
   }, true);
+
+  // 8. Landscape Theater Synchronizer
+  // When phone is turned to landscape on a watch page, seamlessly expands video to full screen
+  function syncLandscapePlayer() {
+    try {
+      var isWatch = window.location.href.includes('/watch');
+      var video = document.querySelector('video');
+      var isLandscape = window.innerWidth > window.innerHeight;
+
+      if (isLandscape && isWatch && video) {
+        document.documentElement.classList.add('theater-landscape');
+      } else {
+        document.documentElement.classList.remove('theater-landscape');
+      }
+    } catch(e) {}
+  }
+
+  window.addEventListener('resize', syncLandscapePlayer);
+  window.addEventListener('orientationchange', syncLandscapePlayer);
+  setInterval(syncLandscapePlayer, 300);
 })();
 true;
 `;
@@ -505,28 +586,29 @@ export const SeamlessYouTubeApp: React.FC = () => {
     };
   }, []);
 
-  // Fullscreen orientation & immersive bar handling
+  // Fullscreen & landscape orientation and immersive bar handling
   useEffect(() => {
-    const handleOrientation = async () => {
+    const syncSystemBars = async () => {
       try {
+        const isImmersive = isFullscreen || isLandscape;
+        if (Platform.OS === 'android') {
+          try {
+            NavigationBar.setHidden(isImmersive);
+          } catch {}
+          await setVisibilityAsync(isImmersive ? 'hidden' : 'visible');
+        }
         if (isFullscreen) {
           await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-          if (Platform.OS === 'android') {
-            await setVisibilityAsync('hidden');
-          }
         } else {
-          // When exiting fullscreen, unlock so the device naturally follows phone holding position
+          // When not locked in fullscreen, unlock so the device naturally follows phone holding position
           await ScreenOrientation.unlockAsync();
-          if (Platform.OS === 'android') {
-            await setVisibilityAsync('visible');
-          }
         }
       } catch (err) {
-        console.warn('[ScreenOrientation] Error:', err);
+        console.warn('[SystemBars] Error:', err);
       }
     };
-    void handleOrientation();
-  }, [isFullscreen]);
+    void syncSystemBars();
+  }, [isFullscreen, isLandscape]);
 
   // Android hardware back button
   useEffect(() => {
