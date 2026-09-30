@@ -168,17 +168,6 @@ const BRAVE_CLEAN_ENGINE = `
           -webkit-text-fill-color: #AAAAAA !important;
         }
 
-        /* Ensure Miniplayer stays visible, docked at bottom while browsing */
-        ytm-miniplayer-renderer,
-        .ytm-miniplayer-renderer {
-          display: flex !important;
-          position: fixed !important;
-          bottom: 0px !important;
-          left: 0px !important;
-          right: 0px !important;
-          z-index: 9999 !important;
-        }
-
         /* Ensure player controls and dialogs remain completely interactive and responsive */
         .html5-video-player,
         .player-controls-background,
@@ -186,67 +175,6 @@ const BRAVE_CLEAN_ENGINE = `
         ytm-menu-popup-renderer,
         ytm-bottom-sheet-renderer {
           pointer-events: auto !important;
-        }
-
-        /* In Landscape, make the video player fill the entire screen edge-to-edge (no black navbar wall) */
-        html.theater-landscape,
-        html.theater-landscape body {
-          overflow: hidden !important;
-          background: #000000 !important;
-          width: 100vw !important;
-          height: 100vh !important;
-          margin: 0 !important;
-          padding: 0 !important;
-        }
-
-        /* Hide mobile header and feed elements in landscape watch */
-        html.theater-landscape ytm-mobile-topbar-renderer,
-        html.theater-landscape ytm-pivot-bar-renderer,
-        html.theater-landscape ytm-watch ytm-item-section-renderer,
-        html.theater-landscape ytm-single-column-watch-next-results-renderer {
-          display: none !important;
-          height: 0 !important;
-          opacity: 0 !important;
-        }
-
-        /* Expand player container to full 100vw x 100vh */
-        html.theater-landscape #player-container-id,
-        html.theater-landscape .player-container,
-        html.theater-landscape #player,
-        html.theater-landscape ytm-watch .player-container,
-        html.theater-landscape .html5-video-player {
-          position: fixed !important;
-          top: 0 !important;
-          left: 0 !important;
-          right: 0 !important;
-          bottom: 0 !important;
-          width: 100vw !important;
-          height: 100vh !important;
-          max-width: 100vw !important;
-          max-height: 100vh !important;
-          z-index: 2147483640 !important;
-          background: #000000 !important;
-        }
-
-        /* Ensure HTML5 Video element fits full screen with aspect ratio */
-        html.theater-landscape video,
-        html.theater-landscape .video-stream,
-        html.theater-landscape .html5-main-video {
-          width: 100vw !important;
-          height: 100vh !important;
-          max-width: 100vw !important;
-          max-height: 100vh !important;
-          object-fit: contain !important;
-          top: 0 !important;
-          left: 0 !important;
-        }
-
-        /* Settings menu & bottom sheet popups must appear above the fullscreen video */
-        html.theater-landscape ytm-menu-popup-renderer,
-        html.theater-landscape ytm-bottom-sheet-renderer,
-        html.theater-landscape .ytp-popup,
-        html.theater-landscape .ytp-settings-menu {
-          z-index: 2147483647 !important;
         }
       \`;
       (document.head || document.documentElement).appendChild(style);
@@ -516,25 +444,39 @@ const BRAVE_CLEAN_ENGINE = `
     } catch(e) {}
   }, true);
 
-  // 8. Landscape Theater Synchronizer
-  // When phone is turned to landscape on a watch page, seamlessly expands video to full screen
-  function syncLandscapePlayer() {
+  // 8. YouTube Native Fullscreen Controller
+  window.__setYouTubeFullscreen = function(enter) {
     try {
-      var isWatch = window.location.href.includes('/watch');
-      var video = document.querySelector('video');
-      var isLandscape = window.innerWidth > window.innerHeight;
-
-      if (isLandscape && isWatch && video) {
-        document.documentElement.classList.add('theater-landscape');
-      } else {
-        document.documentElement.classList.remove('theater-landscape');
+      var isFull = Boolean(
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.mozFullScreenElement ||
+        document.msFullscreenElement
+      );
+      if (enter && !isFull) {
+        var fsBtn = document.querySelector('.ytp-fullscreen-button, button[aria-label*="Full screen" i], button[aria-label*="fullscreen" i], .fullscreen-icon');
+        if (fsBtn) {
+          fsBtn.click();
+        } else {
+          var video = document.querySelector('video');
+          if (video && video.requestFullscreen) {
+            video.requestFullscreen().catch(function(){});
+          } else if (video && video.webkitRequestFullscreen) {
+            video.webkitRequestFullscreen().catch(function(){});
+          }
+        }
+      } else if (!enter && isFull) {
+        var exitBtn = document.querySelector('button[aria-label*="Exit full screen" i], button[aria-label*="exit fullscreen" i]');
+        if (exitBtn) {
+          exitBtn.click();
+        } else if (document.exitFullscreen) {
+          document.exitFullscreen().catch(function(){});
+        } else if (document.webkitExitFullscreen) {
+          document.webkitExitFullscreen().catch(function(){});
+        }
       }
     } catch(e) {}
-  }
-
-  window.addEventListener('resize', syncLandscapePlayer);
-  window.addEventListener('orientationchange', syncLandscapePlayer);
-  setInterval(syncLandscapePlayer, 300);
+  };
 })();
 true;
 `;
@@ -558,6 +500,14 @@ export const SeamlessYouTubeApp: React.FC = () => {
         o === ScreenOrientation.Orientation.LANDSCAPE_LEFT ||
         o === ScreenOrientation.Orientation.LANDSCAPE_RIGHT;
       setIsLandscape(landscape);
+
+      // Trigger YouTube's native fullscreen toggle on physical rotation
+      webViewRef.current?.injectJavaScript(`
+        if (window.__setYouTubeFullscreen) {
+          window.__setYouTubeFullscreen(${landscape});
+        }
+        true;
+      `);
     });
 
     return () => {
@@ -615,11 +565,17 @@ export const SeamlessYouTubeApp: React.FC = () => {
     if (Platform.OS !== 'android') return;
 
     const onBackPress = () => {
-      if (isFullscreen) {
+      if (isFullscreen || isLandscape) {
         webViewRef.current?.injectJavaScript(`
-          if (document.fullscreenElement) {
-            document.exitFullscreen().catch(function(){});
-          }
+          (function() {
+            if (window.__setYouTubeFullscreen) {
+              window.__setYouTubeFullscreen(false);
+            } else if (document.fullscreenElement) {
+              document.exitFullscreen().catch(function(){});
+            } else if (document.webkitExitFullscreen) {
+              document.webkitExitFullscreen().catch(function(){});
+            }
+          })();
           true;
         `);
         setIsFullscreen(false);
@@ -653,7 +609,7 @@ export const SeamlessYouTubeApp: React.FC = () => {
 
     const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => sub.remove();
-  }, [canGoBack, isFullscreen]);
+  }, [canGoBack, isFullscreen, isLandscape]);
 
   const handleNavigationStateChange = (navState: WebViewNavigation) => {
     setCanGoBack(navState.canGoBack);
