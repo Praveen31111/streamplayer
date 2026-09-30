@@ -201,6 +201,61 @@ const BRAVE_CLEAN_ENGINE = `
           position: relative !important;
         }
 
+        /* Clean Edge-to-Edge Player in Landscape - Zero Black Walls */
+        @media (orientation: landscape) {
+          ytm-mobile-topbar-renderer,
+          .mobile-topbar-header,
+          ytm-playlist-panel-renderer,
+          ytm-engagement-panel-section-list-renderer,
+          .playlist-panel,
+          ytm-pivot-bar-renderer {
+            display: none !important;
+            height: 0 !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+          }
+
+          ytm-watch,
+          ytm-watch .player-container,
+          #player-container-id,
+          .player-container {
+            width: 100vw !important;
+            height: 100vh !important;
+            max-width: 100vw !important;
+            max-height: 100vh !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: transparent !important;
+          }
+
+          .html5-video-player {
+            width: 100% !important;
+            height: 100% !important;
+            position: relative !important;
+            overflow: hidden !important;
+            background: transparent !important;
+          }
+
+          video.video-stream,
+          video.html5-main-video {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: contain !important;
+            pointer-events: auto !important;
+          }
+
+          .player-control-overlay,
+          .player-controls-background {
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            pointer-events: auto !important;
+            z-index: 20 !important;
+          }
+        }
+
       \`;
       (document.head || document.documentElement).appendChild(style);
 
@@ -410,43 +465,53 @@ const BRAVE_CLEAN_ENGINE = `
   document.addEventListener('pause', emitMediaState, true);
   document.addEventListener('seeked', emitMediaState, true);
 
-  // 6. Fullscreen Event Bridge (captures both standard and WebKit HTML5 video fullscreen)
-  function notifyFullscreen() {
-    var isFull = Boolean(
-      document.fullscreenElement ||
-      document.webkitFullscreenElement ||
-      document.mozFullScreenElement ||
-      document.msFullscreenElement
-    );
+  // 6. Fullscreen Event Bridge & DOM Fullscreen Engine
+  // Intercepts HTML5 fullscreen to keep player inside WebView DOM
+  // Prevents Android's native onShowCustomView dialog from hiding WebView and windowboxing
+  function notifyFullscreen(isFull) {
     if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
       window.ReactNativeWebView.postMessage(JSON.stringify({
         type: 'FULLSCREEN_CHANGE',
-        isFullscreen: isFull
+        isFullscreen: Boolean(isFull)
       }));
     }
   }
 
-  document.addEventListener('fullscreenchange', notifyFullscreen, true);
-  document.addEventListener('webkitfullscreenchange', notifyFullscreen, true);
-  document.addEventListener('mozfullscreenchange', notifyFullscreen, true);
-  document.addEventListener('MSFullscreenChange', notifyFullscreen, true);
-
-  document.addEventListener('webkitbeginfullscreen', function() {
-    if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
-      window.ReactNativeWebView.postMessage(JSON.stringify({
-        type: 'FULLSCREEN_CHANGE',
-        isFullscreen: true
-      }));
+  try {
+    if (Element.prototype.requestFullscreen) {
+      Element.prototype.requestFullscreen = function() {
+        notifyFullscreen(true);
+        return Promise.resolve();
+      };
     }
+    if (Element.prototype.webkitRequestFullscreen) {
+      Element.prototype.webkitRequestFullscreen = function() {
+        notifyFullscreen(true);
+      };
+    }
+    if (HTMLVideoElement.prototype.webkitEnterFullscreen) {
+      HTMLVideoElement.prototype.webkitEnterFullscreen = function() {
+        notifyFullscreen(true);
+      };
+    }
+    if (document.exitFullscreen) {
+      document.exitFullscreen = function() {
+        notifyFullscreen(false);
+        return Promise.resolve();
+      };
+    }
+    if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen = function() {
+        notifyFullscreen(false);
+      };
+    }
+  } catch(e) {}
+
+  document.addEventListener('fullscreenchange', function() {
+    notifyFullscreen(Boolean(document.fullscreenElement));
   }, true);
-
-  document.addEventListener('webkitendfullscreen', function() {
-    if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
-      window.ReactNativeWebView.postMessage(JSON.stringify({
-        type: 'FULLSCREEN_CHANGE',
-        isFullscreen: false
-      }));
-    }
+  document.addEventListener('webkitfullscreenchange', function() {
+    notifyFullscreen(Boolean(document.webkitFullscreenElement));
   }, true);
 
   // 7. Auto-Miniplayer when browsing other pages / searching
@@ -579,9 +644,10 @@ const BRAVE_CLEAN_ENGINE = `
       } else {
         var transitionStr = animate ? 'transition: transform 0.25s cubic-bezier(0.25, 1, 0.5, 1) !important;' : 'transition: none !important;';
         zoomStyle.textContent = \`
-          video.video-stream, video.html5-main-video {
+          video, video.video-stream, video.html5-main-video {
             transform: scale(\${currentScale.toFixed(3)}) translate(\${panX.toFixed(1)}px, \${panY.toFixed(1)}px) !important;
             transform-origin: center center !important;
+            object-fit: cover !important;
             \${transitionStr}
           }
           .html5-video-player {
@@ -635,9 +701,9 @@ const BRAVE_CLEAN_ENGINE = `
           lastSingleTap = now;
         }
       }
-    }, { passive: false, capture: true });
+    }
 
-    window.addEventListener('touchmove', function(e) {
+    function handleTouchMove(e) {
       if (!isPinching || e.touches.length !== 2) return;
       e.preventDefault();
       var dist = getDist(e.touches[0], e.touches[1]);
@@ -649,9 +715,9 @@ const BRAVE_CLEAN_ENGINE = `
         var dy = (center.y - initialCenter.y) / targetScale;
         applyZoom(targetScale, basePanX + dx, basePanY + dy, false);
       }
-    }, { passive: false, capture: true });
+    }
 
-    window.addEventListener('touchend', function(e) {
+    function handleTouchEnd(e) {
       if (isPinching && e.touches.length < 2) {
         isPinching = false;
         if (currentScale < 1.08) {
@@ -666,14 +732,23 @@ const BRAVE_CLEAN_ENGINE = `
           }
         }
       }
-    }, { passive: true, capture: true });
+    }
 
-    window.addEventListener('touchcancel', function(e) {
+    function handleTouchCancel() {
       if (isPinching) {
         isPinching = false;
         applyZoom(currentScale, panX, panY, true);
       }
-    }, { passive: true, capture: true });
+    }
+
+    window.addEventListener('touchstart', handleTouchStart, { passive: false, capture: true });
+    window.addEventListener('touchmove', handleTouchMove, { passive: false, capture: true });
+    window.addEventListener('touchend', handleTouchEnd, { passive: true, capture: true });
+    window.addEventListener('touchcancel', handleTouchCancel, { passive: true, capture: true });
+    document.addEventListener('touchstart', handleTouchStart, { passive: false, capture: true });
+    document.addEventListener('touchmove', handleTouchMove, { passive: false, capture: true });
+    document.addEventListener('touchend', handleTouchEnd, { passive: true, capture: true });
+    document.addEventListener('touchcancel', handleTouchCancel, { passive: true, capture: true });
   })();
 })();
 true;
@@ -888,7 +963,7 @@ export const SeamlessYouTubeApp: React.FC = () => {
         sharedCookiesEnabled={true}
         allowsInlineMediaPlayback={true}
         mediaPlaybackRequiresUserAction={false}
-        allowsFullscreenVideo={true}
+        allowsFullscreenVideo={false}
         setSupportMultipleWindows={false}
         showsHorizontalScrollIndicator={false}
         showsVerticalScrollIndicator={false}
