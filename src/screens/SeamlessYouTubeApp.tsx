@@ -3,12 +3,12 @@ import {
   StyleSheet,
   View,
   TouchableOpacity,
-  Text,
   BackHandler,
   Platform,
   StatusBar,
   ToastAndroid,
 } from 'react-native';
+import { MaterialIcons } from '@expo/vector-icons';
 import { WebView, WebViewNavigation } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ScreenOrientation from 'expo-screen-orientation';
@@ -236,47 +236,9 @@ const BRAVE_CLEAN_ENGINE = `
           height: 22px !important;
         }
 
-        /* Floating Corner Button */
+        /* Floating Corner Button (handled via native React Native overlay) */
         #__yt_fit_screen_btn__ {
-          position: fixed !important;
-          width: 42px !important;
-          height: 42px !important;
-          border-radius: 50% !important;
-          background: rgba(15, 15, 15, 0.75) !important;
-          backdrop-filter: blur(8px) !important;
-          -webkit-backdrop-filter: blur(8px) !important;
-          border: 1.5px solid rgba(255, 255, 255, 0.35) !important;
-          display: flex !important;
-          align-items: center !important;
-          justify-content: center !important;
-          cursor: pointer !important;
-          z-index: 2147483647 !important;
-          transition: transform 0.15s ease, opacity 0.2s ease !important;
-          padding: 0 !important;
-          margin: 0 !important;
-          pointer-events: auto !important;
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6) !important;
-        }
-
-        @media (orientation: landscape) {
-          #__yt_fit_screen_btn__ {
-            top: 16px !important;
-            left: 16px !important;
-            right: auto !important;
-          }
-        }
-
-        @media (orientation: portrait) {
-          #__yt_fit_screen_btn__ {
-            top: 12px !important;
-            right: 56px !important;
-            left: auto !important;
-          }
-        }
-
-        #__yt_fit_screen_btn__:active {
-          transform: scale(0.9) !important;
-          background: rgba(255, 255, 255, 0.25) !important;
+          display: none !important;
         }
 
         #__yt_fit_toast__ {
@@ -744,6 +706,15 @@ const BRAVE_CLEAN_ENGINE = `
     // 2. Apply Fit Screen styles
     applyFitScreenState(isFitCover);
 
+    try {
+      if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'FIT_SCREEN_CHANGE',
+          isFit: isFitCover
+        }));
+      }
+    } catch(e) {}
+
     // 3. Update all buttons' icon
     var btns = document.querySelectorAll('.yt-fit-screen-toggle-btn');
     for (var b = 0; b < btns.length; b++) {
@@ -836,6 +807,7 @@ export const SeamlessYouTubeApp: React.FC = () => {
   const [canGoBack, setCanGoBack] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
+  const [isFitScreen, setIsFitScreen] = useState(false);
   const lastBackPressTimeRef = useRef(0);
 
   // Auto-rotation & physical orientation detection
@@ -849,6 +821,9 @@ export const SeamlessYouTubeApp: React.FC = () => {
         o === ScreenOrientation.Orientation.LANDSCAPE_LEFT ||
         o === ScreenOrientation.Orientation.LANDSCAPE_RIGHT;
       setIsLandscape(landscape);
+      if (!landscape) {
+        setIsFitScreen(false);
+      }
 
       // Trigger YouTube's native fullscreen toggle on physical rotation
       webViewRef.current?.injectJavaScript(`
@@ -969,6 +944,8 @@ export const SeamlessYouTubeApp: React.FC = () => {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === 'FULLSCREEN_CHANGE') {
         setIsFullscreen(Boolean(data.isFullscreen));
+      } else if (data.type === 'FIT_SCREEN_CHANGE') {
+        setIsFitScreen(Boolean(data.isFit));
       } else if (data.type === 'MEDIA_STATE') {
         backgroundAudioBridge.updatePlaybackState(
           data.videoId,
@@ -1050,7 +1027,13 @@ export const SeamlessYouTubeApp: React.FC = () => {
       />
 
       {isLandscape && (
-        <View style={styles.floatingFitOverlay} pointerEvents="box-none">
+        <View
+          style={[
+            styles.floatingFitOverlay,
+            { right: Math.max(insets.right + 12, 16) },
+          ]}
+          pointerEvents="box-none"
+        >
           <TouchableOpacity
             style={styles.floatingFitBtn}
             onPress={() => {
@@ -1061,9 +1044,15 @@ export const SeamlessYouTubeApp: React.FC = () => {
                 true;
               `);
             }}
-            activeOpacity={0.8}
+            activeOpacity={0.7}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            accessibilityLabel="Fit Screen Toggle"
           >
-            <Text style={styles.floatingFitText}>⤢ Fit Screen</Text>
+            <MaterialIcons
+              name={isFitScreen ? 'fullscreen-exit' : 'fullscreen'}
+              size={24}
+              color={isFitScreen ? '#3EA6FF' : '#FFFFFF'}
+            />
           </TouchableOpacity>
         </View>
       )}
@@ -1082,24 +1071,22 @@ const styles = StyleSheet.create({
   },
   floatingFitOverlay: {
     position: 'absolute',
-    top: 14,
-    left: 16,
+    top: 52,
     zIndex: 999999,
   },
   floatingFitBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(15, 15, 15, 0.75)',
-    borderColor: 'rgba(255, 255, 255, 0.35)',
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(15, 15, 15, 0.72)',
+    borderColor: 'rgba(255, 255, 255, 0.25)',
     borderWidth: 1.2,
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
     elevation: 8,
-  },
-  floatingFitText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.45,
+    shadowRadius: 4,
   },
 });
