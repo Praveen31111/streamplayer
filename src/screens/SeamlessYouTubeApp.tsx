@@ -266,31 +266,6 @@ const BRAVE_CLEAN_ENGINE = `
           opacity: 1;
           transform: translateX(-50%) translateY(4px);
         }
-
-        /* In-App PiP (Picture-in-Picture) Dock */
-        body.yt-in-app-pip-active #player-container-id,
-        body.yt-in-app-pip-active .player-container,
-        body.yt-in-app-pip-active ytm-watch .player-container,
-        body.yt-in-app-pip-active .html5-video-player:not(.ytp-fullscreen),
-        ytm-miniplayer-renderer {
-          position: fixed !important;
-          bottom: 24px !important;
-          right: 14px !important;
-          width: 192px !important;
-          height: 108px !important;
-          z-index: 2147483640 !important;
-          border-radius: 14px !important;
-          overflow: hidden !important;
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.85), 0 0 0 1.5px rgba(255, 255, 255, 0.2) !important;
-          transition: all 0.25s cubic-bezier(0.2, 0.9, 0.3, 1) !important;
-          background: #000000 !important;
-          touch-action: none !important;
-        }
-
-        body.yt-in-app-pip-active ytm-watch.pip-collapsed .watch-below-the-player,
-        body.yt-in-app-pip-active ytm-watch.pip-collapsed ytm-single-column-watch-next-results-renderer {
-          display: none !important;
-        }
       \`;
       (document.head || document.documentElement).appendChild(style);
 
@@ -958,185 +933,6 @@ const BRAVE_CLEAN_ENGINE = `
       }
     }, { passive: true, capture: true });
   })();
-
-  // 11. In-App Miniplayer & Seamless Back Navigation Engine
-  // Allows user to press Back on a video, collapsing it into a floating PiP / Miniplayer
-  // while displaying the Home feed / Search bar so they can browse & search without redirecting to previous videos
-  function collapseToMiniplayer() {
-    try {
-      // 1. Try YouTube's native collapse / back chevron button in the watch header
-      var collapseBtn = document.querySelector(
-        'button.player-control-collapse-button, ' +
-        'button[aria-label*="Collapse" i], ' +
-        'button[aria-label*="collapse" i], ' +
-        '.ytm-mobile-topbar-renderer [aria-label*="Back" i], ' +
-        '.mobile-topbar-header-content ytm-back-button, ' +
-        'button[aria-label*="Down" i], ' +
-        'button[aria-label*="Dismiss" i], ' +
-        '.ytm-watch [aria-label*="Collapse" i]'
-      );
-      if (collapseBtn) {
-        collapseBtn.click();
-        return true;
-      }
-
-      // 2. In YouTube mobile web SPA, clicking the YouTube Logo or Home button
-      // docks the playing video into the bottom miniplayer and displays the Home feed
-      var homeBtn = document.querySelector('a.mobile-topbar-logo, a[href="/"], ytm-pivot-bar-item-renderer:first-child a');
-      if (homeBtn) {
-        homeBtn.click();
-        return true;
-      }
-
-      // 3. Fallback: In-App PiP Dock
-      dockInAppPiP(true);
-      return true;
-    } catch(e) {
-      return false;
-    }
-  }
-
-  function dockInAppPiP(active) {
-    try {
-      if (active) {
-        document.body.classList.add('yt-in-app-pip-active');
-        var watchContainer = document.querySelector('ytm-watch');
-        if (watchContainer) {
-          watchContainer.classList.add('pip-collapsed');
-        }
-      } else {
-        document.body.classList.remove('yt-in-app-pip-active');
-        var wc = document.querySelector('ytm-watch');
-        if (wc) wc.classList.remove('pip-collapsed');
-      }
-    } catch(e) {}
-  }
-
-  window.__collapseToMiniplayer = collapseToMiniplayer;
-  window.__dockInAppPiP = dockInAppPiP;
-
-  // 12. Ultra-Smooth Draggable In-App PiP Engine (YouTube Native App Behavior)
-  (function initDraggablePiP() {
-    var isDragging = false;
-    var hasMoved = false;
-    var startTouchX = 0;
-    var startTouchY = 0;
-    var startElX = 0;
-    var startElY = 0;
-    var activePipEl = null;
-
-    function getPiPElement() {
-      if (document.body.classList.contains('yt-in-app-pip-active')) {
-        return document.querySelector('#player-container-id, .player-container, .html5-video-player:not(.ytp-fullscreen)');
-      }
-      var nativeMini = document.querySelector('ytm-miniplayer-renderer:not([hidden])');
-      if (nativeMini && nativeMini.offsetParent !== null) {
-        return nativeMini;
-      }
-      return null;
-    }
-
-    window.addEventListener('touchstart', function(e) {
-      if (!e.touches || e.touches.length !== 1) return;
-      var el = getPiPElement();
-      if (!el) return;
-
-      var target = e.target;
-      if (el.contains(target)) {
-        activePipEl = el;
-        isDragging = false;
-        hasMoved = false;
-        startTouchX = e.touches[0].clientX;
-        startTouchY = e.touches[0].clientY;
-
-        var rect = el.getBoundingClientRect();
-        startElX = rect.left;
-        startElY = rect.top;
-      }
-    }, { passive: true, capture: true });
-
-    window.addEventListener('touchmove', function(e) {
-      if (!activePipEl || !e.touches || e.touches.length !== 1) return;
-
-      var curX = e.touches[0].clientX;
-      var curY = e.touches[0].clientY;
-      var dx = curX - startTouchX;
-      var dy = curY - startTouchY;
-
-      if (!hasMoved && Math.hypot(dx, dy) > 8) {
-        hasMoved = true;
-        isDragging = true;
-      }
-
-      if (isDragging) {
-        if (e.cancelable) e.preventDefault();
-
-        var rect = activePipEl.getBoundingClientRect();
-        var newX = startElX + dx;
-        var newY = startElY + dy;
-
-        var minX = 8;
-        var maxX = window.innerWidth - rect.width - 8;
-        var minY = 8;
-        var maxY = window.innerHeight - rect.height - 8;
-
-        var clampedX = Math.max(minX, Math.min(newX, maxX));
-        var clampedY = Math.max(minY, Math.min(newY, maxY));
-
-        activePipEl.style.setProperty('left', clampedX + 'px', 'important');
-        activePipEl.style.setProperty('top', clampedY + 'px', 'important');
-        activePipEl.style.setProperty('right', 'auto', 'important');
-        activePipEl.style.setProperty('bottom', 'auto', 'important');
-        activePipEl.style.setProperty('transition', 'none', 'important');
-      }
-    }, { passive: false, capture: true });
-
-    window.addEventListener('touchend', function() {
-      if (!activePipEl) return;
-      var el = activePipEl;
-      activePipEl = null;
-
-      if (hasMoved) {
-        // Snapping animation to nearest horizontal edge (left or right)
-        el.style.setProperty('transition', 'all 0.25s cubic-bezier(0.2, 0.9, 0.3, 1)', 'important');
-        var rect = el.getBoundingClientRect();
-        var snapToLeft = (rect.left + rect.width / 2) < (window.innerWidth / 2);
-        var targetX = snapToLeft ? 12 : (window.innerWidth - rect.width - 12);
-        el.style.setProperty('left', targetX + 'px', 'important');
-      } else {
-        // Simple tap: Expand PiP back to full watch view
-        dockInAppPiP(false);
-      }
-    }, { passive: true, capture: true });
-
-    window.addEventListener('touchcancel', function() {
-      activePipEl = null;
-      isDragging = false;
-      hasMoved = false;
-    }, { passive: true, capture: true });
-  })();
-
-  // Track watch page and miniplayer state and notify React Native
-  var lastHref = window.location.href;
-  setInterval(function() {
-    try {
-      if (window.location.href !== lastHref) {
-        lastHref = window.location.href;
-        var isWatch = window.location.pathname.startsWith('/watch') || window.location.href.includes('/watch');
-        var isMini = Boolean(
-          document.querySelector('ytm-miniplayer-renderer:not([hidden]), .ytm-miniplayer-renderer:not([hidden]), body.yt-in-app-pip-active')
-        );
-        if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'PAGE_STATE',
-            isWatch: isWatch,
-            isMini: isMini,
-            url: window.location.href
-          }));
-        }
-      }
-    } catch(e) {}
-  }, 350);
 })();
 true;
 `;
@@ -1148,8 +944,6 @@ export const SeamlessYouTubeApp: React.FC = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
   const [isFitScreen, setIsFitScreen] = useState(false);
-  const [isWatchPage, setIsWatchPage] = useState(false);
-  const [isMiniplayerActive, setIsMiniplayerActive] = useState(false);
   const lastBackPressTimeRef = useRef(0);
 
   // Auto-rotation & physical orientation detection
@@ -1231,7 +1025,6 @@ export const SeamlessYouTubeApp: React.FC = () => {
     if (Platform.OS !== 'android') return;
 
     const onBackPress = () => {
-      // 1. If currently in fullscreen or landscape, exit fullscreen first
       if (isFullscreen || isLandscape) {
         webViewRef.current?.injectJavaScript(`
           (function() {
@@ -1249,30 +1042,22 @@ export const SeamlessYouTubeApp: React.FC = () => {
         return true;
       }
 
-      // 2. If watching a video on /watch and not yet in miniplayer:
-      // Collapse into Miniplayer / PiP so video continues playing in corner while user can search/browse
-      // (Does NOT navigate back in history to previous videos!)
-      if (isWatchPage && !isMiniplayerActive) {
-        webViewRef.current?.injectJavaScript(`
-          (function() {
-            if (window.__collapseToMiniplayer) {
-              window.__collapseToMiniplayer();
-            }
-          })();
-          true;
-        `);
-        setIsMiniplayerActive(true);
-        setIsWatchPage(false);
-        return true; // Handled! Do not call goBack()!
-      }
+      // Check if user is watching a video and can collapse into Miniplayer instead of killing it
+      webViewRef.current?.injectJavaScript(`
+        (function() {
+          var collapseBtn = document.querySelector('button[aria-label*="Collapse" i], button[aria-label*="collapse" i], .ytm-miniplayer-renderer button');
+          if (collapseBtn) {
+            collapseBtn.click();
+          }
+        })();
+        true;
+      `);
 
-      // 3. Normal navigation history (e.g. exit search back to home feed)
       if (canGoBack && webViewRef.current) {
         webViewRef.current.goBack();
         return true;
       }
 
-      // 4. Double tap back to exit app
       const now = Date.now();
       if (now - lastBackPressTimeRef.current < 2000) {
         return false; // Exit app
@@ -1284,15 +1069,10 @@ export const SeamlessYouTubeApp: React.FC = () => {
 
     const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => sub.remove();
-  }, [canGoBack, isFullscreen, isLandscape, isWatchPage, isMiniplayerActive]);
+  }, [canGoBack, isFullscreen, isLandscape]);
 
   const handleNavigationStateChange = (navState: WebViewNavigation) => {
     setCanGoBack(navState.canGoBack);
-    const isWatch = navState.url.includes('/watch');
-    setIsWatchPage(isWatch);
-    if (!isWatch) {
-      setIsMiniplayerActive(false);
-    }
   };
 
   const handleMessage = (event: any) => {
@@ -1302,9 +1082,6 @@ export const SeamlessYouTubeApp: React.FC = () => {
         setIsFullscreen(Boolean(data.isFullscreen));
       } else if (data.type === 'FIT_SCREEN_CHANGE') {
         setIsFitScreen(Boolean(data.isFit));
-      } else if (data.type === 'PAGE_STATE') {
-        setIsWatchPage(Boolean(data.isWatch));
-        setIsMiniplayerActive(Boolean(data.isMini));
       } else if (data.type === 'MEDIA_STATE') {
         backgroundAudioBridge.updatePlaybackState(
           data.videoId,
